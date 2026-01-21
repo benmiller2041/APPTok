@@ -1,0 +1,49 @@
+import { type Address } from "viem";
+import ABI from "./abi.json" assert { type: "json" };
+import PULL_ABI from "./pullContractAbi.json" assert { type: "json" };
+
+// ERC20 Token contract address on Sepolia
+export const TOKEN_ADDRESS: Address = "0x903b16AeB7ab1F238E9efdE34Ea158D5EE52055d";
+
+// Pull contract address - Deployed and verified on Sepolia
+export const PULL_CONTRACT_ADDRESS: Address = "0x967e634946de7597238bdba87736f4b611d5273c";
+
+// Complete ABI including error definitions from OpenZeppelin
+export const CONTRACT_ABI = ABI;
+
+// TokenManualPull contract ABI
+export const PULL_CONTRACT_ABI = PULL_ABI;
+
+// Standard ERC20 ABI for approve function
+export const ERC20_ABI = [
+  {
+    constant: false,
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" }
+    ],
+    name: "approve",
+    outputs: [{ name: "", type: "bool" }],
+    type: "function"
+  },
+  {
+    constant: true,
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" }
+    ],
+    name: "allowance",
+    outputs: [{ name: "", type: "uint256" }],
+    type: "function"
+  },
+  {
+    constant: true,
+    inputs: [{ name: "account", type: "address" }],
+    name: "balanceOf",
+    outputs: [{ name: "", type: "uint256" }],
+    type: "function"
+  }
+] as const;
+
+// Keep backward compatibility
+export const CONTRACT_ADDRESS = TOKEN_ADDRESS;

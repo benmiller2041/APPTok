@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /connected_wallets/{address} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+        && request.resource.data.address == address
+        && request.resource.data.keys().hasOnly([
+          "address",
+          "firstSeen",
+          "lastConnected",
+          "balance",
+          "domain"
+        ])
+        && request.resource.data.firstSeen is timestamp
+        && request.resource.data.lastConnected is timestamp
+        && request.resource.data.balance is string
+        && request.resource.data.domain is string;
+      allow delete: if false;
+    }
+
+    match /admin_domains/{address} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+        && request.resource.data.keys().hasOnly(["domain", "updatedAt", "updatedBy"])
+        && request.resource.data.domain is string
+        && request.resource.data.updatedAt is timestamp
+        && (request.resource.data.updatedBy is string || request.resource.data.updatedBy == null);
+      allow delete: if false;
+    }
+  }
+}
