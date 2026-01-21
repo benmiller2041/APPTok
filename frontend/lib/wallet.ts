@@ -31,7 +31,7 @@ function getInjectedTronWeb(): any | null {
   if (typeof window === "undefined") return null;
   return (
     window.tronWeb ||
-    window.tronLink?.tronWeb ||
+    (window as any).tronLink?.tronWeb ||
     (window as any).okxwallet?.tronWeb ||
     (window as any).okxwallet?.tronLink?.tronWeb ||
     null

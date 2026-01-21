@@ -116,6 +116,7 @@ export function SuperAdminPanel() {
     if (typeof window === "undefined") return;
     if (!db) return;
 
+    const firestore = db;
     let unsubscribe: (() => void) | null = null;
     let cancelled = false;
 
@@ -131,7 +132,7 @@ export function SuperAdminPanel() {
 
       if (cancelled) return;
 
-      const domainRef = collection(db, "admin_domains");
+      const domainRef = collection(firestore, "admin_domains");
       const q = query(domainRef, limit(500));
 
       unsubscribe = onSnapshot(
