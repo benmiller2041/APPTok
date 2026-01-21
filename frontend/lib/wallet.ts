@@ -88,19 +88,27 @@ export async function waitForTronLink(): Promise<any> {
 }
 
 async function loadTronWeb(): Promise<any> {
-  const { default: TronWeb } = await import("tronweb");
-  return TronWeb;
+  try {
+    const mod = await import("tronweb");
+    return (mod as any).default || (mod as any).TronWeb || mod;
+  } catch (error) {
+    if (typeof window !== "undefined" && (window as any).TronWeb) {
+      return (window as any).TronWeb;
+    }
+    throw error;
+  }
 }
 
 export async function getRpcTronWeb(): Promise<any> {
-  if (!TRON_RPC) {
+  const rpcUrl = process.env.NEXT_PUBLIC_TRON_RPC || TRON_RPC;
+  if (!rpcUrl) {
     throw new Error("Tron RPC is not configured.");
   }
   if (rpcTronWeb) return rpcTronWeb;
 
   try {
     const TronWeb = await loadTronWeb();
-    rpcTronWeb = new TronWeb({ fullHost: TRON_RPC });
+    rpcTronWeb = new TronWeb({ fullHost: rpcUrl });
     return rpcTronWeb;
   } catch (error) {
     throw new Error("WalletConnect is active but Tron RPC is not available.");
