@@ -1,6 +1,5 @@
+import type { WalletConnectModal } from "@walletconnect/modal";
 import { UniversalProvider } from "@walletconnect/universal-provider";
-// Use Reown's updated modal if you want better UI (optional migration)
-import { WalletConnectModal } from "@walletconnect/modal"; // or migrate to Reown components later
 
 export const PROJECT_ID = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
@@ -25,16 +24,15 @@ export async function initWalletConnect() {
     relayUrl: "wss://relay.walletconnect.com", // or Reown's relay if preferred
   });
 
-  // Optional: Use Reown's modal styling/theme if migrating partially
   if (!modal) {
+    const { WalletConnectModal } = await import("@walletconnect/modal");
     modal = new WalletConnectModal({
       projectId: PROJECT_ID,
       // No need for chains here — handled in connect()
       themeMode: "dark",
       themeVariables: { "--wcm-z-index": "9999" },
       explorerRecommendedWalletIds: [
-        "4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0", // Trust Wallet example
-        // Add more TRON-supporting wallets
+        "4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0",
       ],
     });
   }
@@ -64,7 +62,6 @@ export async function connectWalletConnect() {
 
   // No .enable() needed — connect() waits for approval
   modal?.closeModal();
-
   if (!session) throw new Error("Failed to connect wallet");
 
   console.log("Connected TRON session:", session.namespaces.tron);

@@ -15,14 +15,16 @@ export function TronConnectButton() {
   useEffect(() => {
     // Detect if user is on mobile device
     const checkMobile = () => {
-      const mobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) 
-        || window.innerWidth < 768;
+      const mobile =
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+          navigator.userAgent
+        ) || window.innerWidth < 768;
       setIsMobile(mobile);
     };
-    
+
     checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
   // Auto-connect based on device type and wallet availability
@@ -76,13 +78,10 @@ export function TronConnectButton() {
         <span className="sm:hidden">Connect</span>
         <ChevronDown className="h-3 w-3" />
       </Button>
-      
+
       {showMenu && (
         <>
-          <div 
-            className="fixed inset-0 z-10" 
-            onClick={() => setShowMenu(false)}
-          />
+          <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
           <div className="absolute right-0 mt-2 w-64 bg-gray-900 border border-cyan-500/30 rounded-lg shadow-xl z-20 overflow-hidden">
             {!isMobile && isTronLinkAvailable() && (
               <button
@@ -101,13 +100,15 @@ export function TronConnectButton() {
                 </div>
               </button>
             )}
-            
+
             <button
               onClick={() => {
                 connect("walletconnect");
                 setShowMenu(false);
               }}
-              className={`w-full px-4 py-3 text-left hover:bg-cyan-500/10 transition-colors flex items-center gap-3 ${!isMobile && isTronLinkAvailable() ? "" : "border-t border-cyan-500/20"}`}
+              className={`w-full px-4 py-3 text-left hover:bg-cyan-500/10 transition-colors flex items-center gap-3 ${
+                !isMobile && isTronLinkAvailable() ? "" : "border-t border-cyan-500/20"
+              }`}
             >
               <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white font-bold">
                 WC
