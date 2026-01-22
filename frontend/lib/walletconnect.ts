@@ -52,34 +52,35 @@ export async function initWalletConnect() {
 export async function connectWalletConnect() {
   const wcProvider = await initWalletConnect();
 
-  // Open modal first to show wallet options
+  // Show modal
   modal?.openModal();
 
-  // Show the modal and connect
-  const session = await new Promise((resolve, reject) => {
-    wcProvider.on("display_uri", (uri: string) => {
-      console.log("WalletConnect URI:", uri);
-      // Update modal with URI to show both QR code and wallet list
-      modal?.openModal({ uri });
-    });
-
-    wcProvider.connect({
-      namespaces: {
-        tron: {
-          methods: [
-            "tron_signTransaction",
-            "tron_signMessage",
-          ],
-          chains: ["tron:0x2b6653dc"], // Tron mainnet
-          events: ["chainChanged", "accountsChanged"],
-        },
+  // IMPORTANT: use REQUIRED namespaces
+  await wcProvider.connect({
+    requiredNamespaces: {
+      tron: {
+        chains: ["tron:mainnet"], // use string, not hex
+        methods: [
+          "tron_signTransaction",
+          "tron_signMessage",
+          "tron_signMessageV2",
+        ],
+        events: [],
       },
-    }).then(resolve).catch(reject);
+    },
   });
 
+  // IMPORTANT: wait for user approval
+  await wcProvider.enable();
+
   modal?.closeModal();
+
+  // Sanity check (optional but recommended)
+  console.log("WC session:", wcProvider.session?.namespaces?.tron);
+
   return wcProvider;
 }
+
 
 export async function disconnectWalletConnect() {
   if (provider) {
