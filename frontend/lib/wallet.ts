@@ -80,7 +80,7 @@ export function isTronLinkAvailable(): boolean {
 
 export function isWalletConnectActive(): boolean {
   const provider = getWalletConnectProvider();
-  return provider?.session?.namespaces?.tron?.accounts?.length > 0;
+  return (provider?.session?.namespaces?.tron?.accounts ?? []).length > 0;
 }
 
 export async function waitForTronLink(): Promise<any> {

