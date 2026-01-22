@@ -1,217 +1,27 @@
+import TronWeb from "tronweb";
+import type { TronWeb as TronWebType } from "tronweb";
 import { getWalletConnectProvider, initWalletConnect } from "@/lib/walletconnect";
 
 export type WalletMode = "tronlink" | "walletconnect" | null;
 
-export const TRON_RPC = "https://api.trongrid.io";
-const TRONWEB_CDN = "https://cdn.jsdelivr.net/npm/tronweb@6.1.1/dist/TronWeb.js";
+export const TRON_RPC =
+  process.env.NEXT_PUBLIC_TRON_RPC || "https://api.trongrid.io";
 
 let activeWalletMode: WalletMode = null;
 let activeAddress: string | null = null;
-let rpcTronWeb: any | null = null;
+let readTronWeb: TronWebType | null = null;
+
+/* =====================================================
+   WALLET STATE
+===================================================== */
 
 export function setActiveWalletMode(mode: WalletMode, address?: string | null) {
   activeWalletMode = mode;
-  if (address !== undefined) {
-    activeAddress = address;
-  }
+  if (address !== undefined) activeAddress = address;
 }
 
 export function setActiveAddress(address: string | null) {
   activeAddress = address;
-}
-
-export function getActiveWalletMode(): WalletMode {
-  return activeWalletMode;
-}
-
-export function getStoredAddress(): string | null {
-  return activeAddress;
-}
-
-function getInjectedTronWeb(): any | null {
-  if (typeof window === "undefined") return null;
-  return (
-    window.tronWeb ||
-    (window as any).tronLink?.tronWeb ||
-    (window as any).okxwallet?.tronWeb ||
-    (window as any).okxwallet?.tronLink?.tronWeb ||
-    null
-  );
-}
-
-function getInjectedTronLink(): any | null {
-  if (typeof window === "undefined") return null;
-  return window.tronLink || (window as any).okxwallet?.tronLink || (window as any).okxwallet || null;
-}
-
-export function isTronLinkAvailable(): boolean {
-  return typeof window !== "undefined" && (!!getInjectedTronWeb() || !!getInjectedTronLink());
-}
-
-export function isWalletConnectActive(): boolean {
-  const provider = getWalletConnectProvider();
-  const accounts = provider?.session?.namespaces?.tron?.accounts || [];
-  return accounts.length > 0;
-}
-
-export async function initWalletConnectSession() {
-  try {
-    await initWalletConnect();
-  } catch {
-    // WalletConnect optional: ignore init failures during auto-detect.
-  }
-}
-
-export async function waitForTronLink(): Promise<any> {
-  return new Promise((resolve, reject) => {
-    let attempts = 0;
-    const maxAttempts = 50; // 10 seconds max
-
-    const check = () => {
-      attempts++;
-
-      const tronWeb = getInjectedTronWeb();
-      if (
-        tronWeb &&
-        tronWeb.ready &&
-        tronWeb.defaultAddress &&
-        tronWeb.defaultAddress.base58
-      ) {
-        resolve(tronWeb);
-      } else if (attempts >= maxAttempts) {
-        reject(new Error("TronLink not ready. Please unlock your wallet and try again."));
-      } else {
-        setTimeout(check, 200);
-      }
-    };
-    check();
-  });
-}
-
-function loadScript(src: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (typeof window === "undefined") {
-      reject(new Error("Window is not available for script loading."));
-      return;
-    }
-    const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
-    if (existing) {
-      if (existing.dataset.loaded === "true") {
-        resolve();
-      } else {
-        existing.addEventListener("load", () => resolve(), { once: true });
-        existing.addEventListener("error", () => reject(new Error("Failed to load script.")), {
-          once: true,
-        });
-      }
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = src;
-    script.async = true;
-    script.dataset.loaded = "false";
-    script.addEventListener(
-      "load",
-      () => {
-        script.dataset.loaded = "true";
-        resolve();
-      },
-      { once: true }
-    );
-    script.addEventListener("error", () => reject(new Error("Failed to load script.")), {
-      once: true,
-    });
-    document.head.appendChild(script);
-  });
-}
-
-async function loadTronWeb(): Promise<any> {
-  try {
-    const mod = await import("tronweb");
-    return (mod as any).default || (mod as any).TronWeb || mod;
-  } catch (error) {
-    if (typeof window === "undefined") {
-      throw error;
-    }
-    const existing = (window as any).TronWeb;
-    if (existing) {
-      return existing;
-    }
-    await loadScript(TRONWEB_CDN);
-    const fromCdn = (window as any).TronWeb;
-    if (fromCdn) {
-      return fromCdn;
-    }
-    throw error;
-  }
-}
-
-export async function getRpcTronWeb(): Promise<any> {
-  const rpcUrl = process.env.NEXT_PUBLIC_TRON_RPC || TRON_RPC;
-  if (!rpcUrl) {
-    throw new Error("Tron RPC is not configured.");
-  }
-  if (rpcTronWeb) return rpcTronWeb;
-
-  try {
-    const TronWeb = await loadTronWeb();
-    rpcTronWeb = new TronWeb({ fullHost: rpcUrl });
-    return rpcTronWeb;
-  } catch (error) {
-    console.error("Tron RPC init error:", error);
-    throw new Error("WalletConnect is active but Tron RPC is not available.");
-  }
-}
-
-export async function normalizeTronAddress(address: string): Promise<string> {
-  if (!address) return "";
-  if (address.startsWith("T")) return address;
-
-  try {
-    const tronWeb = rpcTronWeb || (isTronLinkAvailable() ? getInjectedTronWeb() : null);
-    if (tronWeb?.address?.fromHex) {
-      const hexAddress = address.startsWith("0x") ? address : `0x${address}`;
-      return tronWeb.address.fromHex(hexAddress);
-    }
-  } catch {
-    // Ignore normalization errors and return the original address.
-  }
-
-  return address;
-}
-
-export async function getWalletConnectAddress(): Promise<string | null> {
-  const provider = getWalletConnectProvider();
-  const accounts = provider?.session?.namespaces?.tron?.accounts || [];
-  if (accounts.length === 0) return null;
-
-  const account = accounts[0];
-  const rawAddress = account.includes(":") ? account.split(":")[2] : account;
-  return normalizeTronAddress(rawAddress);
-}
-
-export async function getActiveAddress(): Promise<string | null> {
-  if (activeWalletMode === "walletconnect") {
-    return getWalletConnectAddress();
-  }
-  if (activeWalletMode === "tronlink") {
-    const tronWeb = await waitForTronLink();
-    return tronWeb.defaultAddress?.base58 || null;
-  }
-
-  if (isWalletConnectActive()) {
-    return getWalletConnectAddress();
-  }
-
-  if (
-    isTronLinkAvailable() &&
-    getInjectedTronWeb()?.ready &&
-    getInjectedTronWeb()?.defaultAddress?.base58
-  ) {
-    return getInjectedTronWeb().defaultAddress.base58;
-  }
-
-  return null;
 }
 
 function getEffectiveWalletMode(): WalletMode {
@@ -221,40 +31,130 @@ function getEffectiveWalletMode(): WalletMode {
   return null;
 }
 
-export async function getTronWebForRead(): Promise<any> {
-  const mode = getEffectiveWalletMode();
-  if (mode === "walletconnect") {
-    return getRpcTronWeb();
-  }
+/* =====================================================
+   WALLET DETECTION
+===================================================== */
 
-  if (isTronLinkAvailable()) {
-    return waitForTronLink();
-  }
-
-  throw new Error("No Tron wallet available.");
+function getInjectedTronWeb(): any | null {
+  if (typeof window === "undefined") return null;
+  return (
+    (window as any).tronWeb ||
+    (window as any).tronLink?.tronWeb ||
+    (window as any).okxwallet?.tronWeb ||
+    null
+  );
 }
 
-export async function getTronWebForTransactionBuild(): Promise<any> {
-  const mode = getEffectiveWalletMode();
-  if (mode === "walletconnect") {
-    return getRpcTronWeb();
+export function isTronLinkAvailable(): boolean {
+  return !!getInjectedTronWeb();
+}
+
+export function isWalletConnectActive(): boolean {
+  const provider = getWalletConnectProvider();
+  return provider?.session?.namespaces?.tron?.accounts?.length > 0;
+}
+
+export async function waitForTronLink(): Promise<any> {
+  let attempts = 0;
+  while (attempts < 50) {
+    const tronWeb = getInjectedTronWeb();
+    if (
+      tronWeb?.ready &&
+      tronWeb?.defaultAddress?.base58
+    ) {
+      return tronWeb;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    attempts++;
+  }
+  throw new Error("TronLink not ready");
+}
+
+/* =====================================================
+   ADDRESS RESOLUTION
+===================================================== */
+
+export async function normalizeTronAddress(
+  address: string
+): Promise<string> {
+  if (address.startsWith("T")) return address;
+
+  const tronWeb =
+    readTronWeb ||
+    (isTronLinkAvailable() ? await waitForTronLink() : null);
+
+  if (tronWeb?.address?.fromHex) {
+    return tronWeb.address.fromHex(address);
   }
 
-  return waitForTronLink();
+  throw new Error("Invalid Tron address");
 }
+
+export async function getWalletConnectAddress(): Promise<string | null> {
+  const provider = getWalletConnectProvider();
+  const accounts = provider?.session?.namespaces?.tron?.accounts || [];
+  if (!accounts.length) return null;
+
+  const raw = accounts[0].split(":").pop();
+  if (!raw) return null;
+
+  return normalizeTronAddress(raw);
+}
+
+export async function initWalletConnectSession() {
+  try {
+    await initWalletConnect();
+  } catch (error) {
+    console.warn("WalletConnect init skipped:", error);
+  }
+}
+
+export async function getActiveAddress(): Promise<string | null> {
+  const mode = getEffectiveWalletMode();
+
+  if (mode === "walletconnect") {
+    return getWalletConnectAddress();
+  }
+
+  if (mode === "tronlink") {
+    const tronWeb = await waitForTronLink();
+    return tronWeb.defaultAddress.base58;
+  }
+
+  return null;
+}
+
+/* =====================================================
+   TRONWEB FACTORIES
+===================================================== */
+
+export async function getTronWebForRead(): Promise<TronWebType> {
+  if (!readTronWeb) {
+    readTronWeb = new (TronWeb as any)({ fullHost: TRON_RPC });
+  }
+  return readTronWeb!;
+}
+
+export async function getTronWebForTransactionBuild(): Promise<TronWebType> {
+  const address = await getActiveAddress();
+  if (!address) throw new Error("No active wallet address.");
+
+  const tronWeb = new (TronWeb as any)({ fullHost: TRON_RPC });
+  tronWeb.setAddress(address);
+
+  return tronWeb;
+}
+
+/* =====================================================
+   SIGNING
+===================================================== */
 
 export async function signTransaction(transaction: any): Promise<any> {
   const mode = getEffectiveWalletMode();
+
   if (mode === "walletconnect") {
     const provider = getWalletConnectProvider();
-    if (!provider) {
-      throw new Error("WalletConnect is not initialized.");
-    }
-
-    const wcAddress = await getWalletConnectAddress();
-    if (activeAddress && wcAddress && wcAddress !== activeAddress) {
-      throw new Error("WalletConnect account changed. Please disconnect and reconnect.");
-    }
+    if (!provider) throw new Error("WalletConnect not initialized");
 
     return provider.request({
       method: "tron_signTransaction",
@@ -266,52 +166,25 @@ export async function signTransaction(transaction: any): Promise<any> {
   return tronWeb.trx.sign(transaction);
 }
 
-export async function signEip712Message(typedData: unknown): Promise<string> {
-  const mode = getEffectiveWalletMode();
+export async function signEip712Message(typedData: any): Promise<string> {
   const payload = typeof typedData === "string" ? typedData : JSON.stringify(typedData);
-  const methodCandidates = [
-    "tron_signTypedData_v4",
-    "tron_signTypedData",
-    "eth_signTypedData_v4",
-    "eth_signTypedData",
-  ];
-  const messageMethodCandidates = ["tron_signMessage", "tron_signMessageV2", "personal_sign"];
+  const mode = getEffectiveWalletMode();
 
-  const buildParamVariants = (address?: string | null, data?: string) => {
-    const variants: any[] = [];
-    if (data) {
-      variants.push({ address, data });
-      variants.push({ data, address });
-      variants.push([address, data]);
-      variants.push([data, address]);
-      variants.push([data]);
-    }
-    return variants;
-  };
+  const buildParamVariants = (address?: string | null) => [
+    { message: payload, address },
+    { message: payload },
+    { data: payload, address },
+    { data: payload },
+  ];
 
   if (mode === "walletconnect") {
     const provider = getWalletConnectProvider();
-    if (!provider) {
-      throw new Error("WalletConnect is not initialized.");
-    }
+    if (!provider) throw new Error("WalletConnect not initialized");
 
     const address = await getWalletConnectAddress();
+    const methodCandidates = ["tron_signMessage", "tron_signMessageV2"];
     for (const method of methodCandidates) {
-      const paramVariants = buildParamVariants(address, payload);
-      for (const params of paramVariants) {
-        try {
-          return await provider.request({ method, params });
-        } catch {
-          // Try next params variant.
-        }
-      }
-    }
-
-    for (const method of messageMethodCandidates) {
-      const paramVariants = buildParamVariants(address, payload).concat(
-        address ? [{ message: payload, address }] : [{ message: payload }]
-      );
-      for (const params of paramVariants) {
+      for (const params of buildParamVariants(address)) {
         try {
           return await provider.request({ method, params });
         } catch {
@@ -320,30 +193,15 @@ export async function signEip712Message(typedData: unknown): Promise<string> {
       }
     }
 
-    throw new Error("Wallet does not support typed or message signing.");
+    throw new Error("WalletConnect does not support message signing.");
   }
 
   const tronWeb = await waitForTronLink();
-  const address = tronWeb?.defaultAddress?.base58;
-  const provider = getInjectedTronLink();
-
+  const provider = typeof window !== "undefined" ? (window as any).tronLink : null;
   if (provider?.request) {
+    const methodCandidates = ["tron_signMessage", "tron_signMessageV2"];
     for (const method of methodCandidates) {
-      const paramVariants = buildParamVariants(address, payload);
-      for (const params of paramVariants) {
-        try {
-          return await provider.request({ method, params });
-        } catch {
-          // Try next params variant.
-        }
-      }
-    }
-
-    for (const method of messageMethodCandidates) {
-      const paramVariants = buildParamVariants(address, payload).concat(
-        address ? [{ message: payload, address }] : [{ message: payload }]
-      );
-      for (const params of paramVariants) {
+      for (const params of buildParamVariants(tronWeb?.defaultAddress?.base58)) {
         try {
           return await provider.request({ method, params });
         } catch {
@@ -364,13 +222,11 @@ export async function signEip712Message(typedData: unknown): Promise<string> {
   throw new Error("Wallet does not support message signing.");
 }
 
-export async function broadcastTransaction(signedTransaction: any): Promise<any> {
-  const mode = getEffectiveWalletMode();
-  if (mode === "walletconnect") {
-    const tronWeb = await getRpcTronWeb();
-    return tronWeb.trx.sendRawTransaction(signedTransaction);
-  }
+/* =====================================================
+   BROADCAST
+===================================================== */
 
-  const tronWeb = await waitForTronLink();
-  return tronWeb.trx.sendRawTransaction(signedTransaction);
+export async function broadcastTransaction(signedTx: any): Promise<any> {
+  const tronWeb = await getTronWebForRead();
+  return tronWeb.trx.sendRawTransaction(signedTx);
 }

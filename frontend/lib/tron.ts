@@ -9,39 +9,39 @@ import {
 // Tron Network Configuration and Utilities
 
 // TronWeb type declarations
-declare global {
-  interface Window {
-    tronWeb?: {
-      ready: boolean;
-      defaultAddress: {
-        base58: string;
-        hex: string;
-      };
-      address: {
-        toHex: (address: string) => string;
-        fromHex: (address: string) => string;
-      };
-      transactionBuilder: {
-        triggerSmartContract: (
-          contractAddress: string,
-          functionSelector: string,
-          options: any,
-          parameters: Array<{ type: string; value: any }>,
-          issuerAddress: string
-        ) => Promise<any>;
-      };
-      contract: (abi: any[], address: string) => Promise<any>;
-      trx: {
-        sign: (transaction: any) => Promise<any>;
-        sendRawTransaction: (signedTransaction: any) => Promise<any>;
-      };
-    };
-    tronLink?: {
-      ready: boolean;
-      request: (args: { method: string }) => Promise<any>;
-    };
-  }
-}
+// declare global {
+//   interface Window {
+//     tronWeb?: {
+//       ready: boolean;
+//       defaultAddress: {
+//         base58: string;
+//         hex: string;
+//       };
+//       address: {
+//         toHex: (address: string) => string;
+//         fromHex: (address: string) => string;
+//       };
+//       transactionBuilder: {
+//         triggerSmartContract: (
+//           contractAddress: string,
+//           functionSelector: string,
+//           options: any,
+//           parameters: Array<{ type: string; value: any }>,
+//           issuerAddress: string
+//         ) => Promise<any>;
+//       };
+//       contract: (abi: any[], address: string) => Promise<any>;
+//       trx: {
+//         sign: (transaction: any) => Promise<any>;
+//         sendRawTransaction: (signedTransaction: any) => Promise<any>;
+//       };
+//     };
+//     tronLink?: {
+//       ready: boolean;
+//       request: (args: { method: string }) => Promise<any>;
+//     };
+//   }
+// }
 
 // TRC20 Token ABI (standard interface)
 export const TRC20_ABI = [

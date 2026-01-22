@@ -70,12 +70,13 @@ export function TronProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      const tronWeb = (window as any).tronWeb;
       if (
         isTronLinkAvailable() &&
-        window.tronWeb?.ready &&
-        window.tronWeb.defaultAddress?.base58
+        tronWeb?.ready &&
+        tronWeb.defaultAddress?.base58
       ) {
-        const normalized = await normalizeTronAddress(window.tronWeb.defaultAddress.base58);
+        const normalized = await normalizeTronAddress(tronWeb.defaultAddress.base58);
         if (!cancelled) {
           setAddress(normalized);
           setConnectionType("tronlink");
@@ -97,7 +98,8 @@ export function TronProvider({ children }: { children: ReactNode }) {
 
     if (connectionType === "tronlink") {
       // Only poll for changes if already connected via TronLink
-      if (typeof window !== "undefined" && window.tronWeb) {
+      const tronWeb = typeof window !== "undefined" ? (window as any).tronWeb : null;
+      if (tronWeb) {
         const interval = setInterval(async () => {
           try {
             const currentAddr = await getActiveAddress();
@@ -167,8 +169,9 @@ export function TronProvider({ children }: { children: ReactNode }) {
         }
 
         // Request account access
-        if (window.tronLink?.request) {
-          await window.tronLink.request({ method: "tron_requestAccounts" });
+        const tronLink = typeof window !== "undefined" ? (window as any).tronLink : null;
+        if (tronLink?.request) {
+          await tronLink.request({ method: "tron_requestAccounts" });
         }
 
         const tronWeb = await waitForTronLink();
