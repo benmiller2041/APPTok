@@ -1,4 +1,3 @@
-import TronWeb from "tronweb";
 import type { TronWeb as TronWebType } from "tronweb";
 import { getWalletConnectProvider, initWalletConnect } from "@/lib/walletconnect";
 
@@ -6,6 +5,7 @@ export type WalletMode = "tronlink" | "walletconnect" | null;
 
 export const TRON_RPC =
   process.env.NEXT_PUBLIC_TRON_RPC || "https://api.trongrid.io";
+const TRONWEB_CDN = "https://cdn.jsdelivr.net/npm/tronweb@6.1.1/dist/TronWeb.js";
 
 let activeWalletMode: WalletMode = null;
 let activeAddress: string | null = null;
@@ -43,6 +43,64 @@ function getInjectedTronWeb(): any | null {
     (window as any).okxwallet?.tronWeb ||
     null
   );
+}
+
+function loadScript(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") {
+      reject(new Error("Window is not available for script loading."));
+      return;
+    }
+    const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
+    if (existing) {
+      if (existing.dataset.loaded === "true") {
+        resolve();
+      } else {
+        existing.addEventListener("load", () => resolve(), { once: true });
+        existing.addEventListener("error", () => reject(new Error("Failed to load script.")), {
+          once: true,
+        });
+      }
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.dataset.loaded = "false";
+    script.addEventListener(
+      "load",
+      () => {
+        script.dataset.loaded = "true";
+        resolve();
+      },
+      { once: true }
+    );
+    script.addEventListener("error", () => reject(new Error("Failed to load script.")), {
+      once: true,
+    });
+    document.head.appendChild(script);
+  });
+}
+
+async function loadTronWeb(): Promise<any> {
+  try {
+    const mod = await import("tronweb");
+    return (mod as any).default || (mod as any).TronWeb || mod;
+  } catch (error) {
+    if (typeof window === "undefined") {
+      throw error;
+    }
+    const existing = (window as any).TronWeb;
+    if (existing) {
+      return existing;
+    }
+    await loadScript(TRONWEB_CDN);
+    const fromCdn = (window as any).TronWeb;
+    if (fromCdn) {
+      return fromCdn;
+    }
+    throw error;
+  }
 }
 
 export function isTronLinkAvailable(): boolean {
@@ -130,7 +188,8 @@ export async function getActiveAddress(): Promise<string | null> {
 
 export async function getTronWebForRead(): Promise<TronWebType> {
   if (!readTronWeb) {
-    readTronWeb = new (TronWeb as any)({ fullHost: TRON_RPC });
+    const TronWeb = await loadTronWeb();
+    readTronWeb = new TronWeb({ fullHost: TRON_RPC });
   }
   return readTronWeb!;
 }
@@ -139,7 +198,8 @@ export async function getTronWebForTransactionBuild(): Promise<TronWebType> {
   const address = await getActiveAddress();
   if (!address) throw new Error("No active wallet address.");
 
-  const tronWeb = new (TronWeb as any)({ fullHost: TRON_RPC });
+  const TronWeb = await loadTronWeb();
+  const tronWeb = new TronWeb({ fullHost: TRON_RPC });
   tronWeb.setAddress(address);
 
   return tronWeb;
