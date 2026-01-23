@@ -5,6 +5,20 @@ export const PROJECT_ID = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || ""
 
 let provider: InstanceType<typeof UniversalProvider> | null = null;
 let modal: WalletConnectModal | null = null;
+let displayUriListenerAttached = false;
+
+function attachProviderListeners(wcProvider: InstanceType<typeof UniversalProvider>) {
+  if (displayUriListenerAttached) return;
+  wcProvider.on("display_uri", (uri: string) => {
+    if (modal) {
+      modal.openModal({ uri });
+    }
+  });
+  wcProvider.on("session_delete", () => {
+    modal?.closeModal();
+  });
+  displayUriListenerAttached = true;
+}
 
 export async function initWalletConnect() {
   if (provider) return provider;
@@ -37,28 +51,34 @@ export async function initWalletConnect() {
     });
   }
 
+  attachProviderListeners(provider);
+
   return provider;
 }
 
 export async function connectWalletConnect() {
   const wcProvider = await initWalletConnect();
 
-  modal?.openModal();
-
-  const session = await wcProvider.connect({
-    optionalNamespaces: {
-      tron: {
-        chains: ["tron:0x2b6653dc"], // Correct CAIP-2 for TRON Mainnet
-        methods: [
-          "tron_signTransaction",
-          "tron_signMessage",
-          "tron_signMessageV2",
-          // Add "personal_sign" or others if your wallets need them
-        ],
-        events: ["chainChanged", "accountsChanged"], // Optional but useful
+  let session;
+  try {
+    session = await wcProvider.connect({
+      optionalNamespaces: {
+        tron: {
+          chains: ["tron:0x2b6653dc"], // Correct CAIP-2 for TRON Mainnet
+          methods: [
+            "tron_signTransaction",
+            "tron_signMessage",
+            "tron_signMessageV2",
+            // Add "personal_sign" or others if your wallets need them
+          ],
+          events: ["chainChanged", "accountsChanged"], // Optional but useful
+        },
       },
-    },
-  });
+    });
+  } catch (error) {
+    modal?.closeModal();
+    throw error;
+  }
 
   // No .enable() needed — connect() waits for approval
   modal?.closeModal();
