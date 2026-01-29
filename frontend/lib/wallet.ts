@@ -187,10 +187,39 @@ export async function signTransaction(transaction: any): Promise<any> {
     const provider = getWalletConnectProvider();
     if (!provider) throw new Error("WalletConnect not initialized");
 
-    return provider.request({
-      method: "tron_signTransaction",
-      params: { transaction },
-    });
+    const hasSignature = (tx: any) =>
+      Array.isArray(tx?.signature) && tx.signature.length > 0;
+
+    const normalizeSignedTx = (res: any) => {
+      if (!res) return res;
+      if (hasSignature(res)) return res;
+      if (hasSignature(res?.result)) return res.result;
+      if (hasSignature(res?.transaction)) return res.transaction;
+      if (hasSignature(res?.signedTransaction)) return res.signedTransaction;
+      return res?.result ?? res;
+    };
+
+    const payloads = [
+      { method: "tron_signTransaction", params: { transaction } },
+      { method: "tron_signTransaction", params: [transaction] },
+      { method: "tron_signTransaction", params: transaction },
+    ];
+
+    let lastError: any;
+    for (const payload of payloads) {
+      try {
+        const res = await provider.request(payload as any);
+        const signed = normalizeSignedTx(res);
+        if (!hasSignature(signed)) {
+          throw new Error("Transaction not signed by wallet");
+        }
+        return signed;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error("WalletConnect failed to sign transaction");
   }
 
   const tronWeb = await waitForTronLink();
