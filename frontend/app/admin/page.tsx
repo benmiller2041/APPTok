@@ -27,7 +27,7 @@ export default function AdminPage() {
       setIsChecking(true);
       try {
         const owner = await getContractOwner(PULL_CONTRACT_ADDRESS);
-        const ownerMatch = owner?.toLowerCase() === address.toLowerCase();
+        const ownerMatch = owner === address;
         const adminMatch = await getAdminStatus(PULL_CONTRACT_ADDRESS, address);
         setOwnerAddress(owner);
         setIsOwner(!!ownerMatch);
@@ -76,13 +76,13 @@ export default function AdminPage() {
               You are not authorized to access this page. Connect with an admin wallet.
             </p>
           </div>
-          {/* <div className="rounded-lg border border-blue-500/20 bg-gray-900/50 p-4 text-xs text-cyan-200 space-y-1">
+          <div className="rounded-lg border border-blue-500/20 bg-gray-900/50 p-4 text-xs text-cyan-200 space-y-1">
             <div>Contract: {PULL_CONTRACT_ADDRESS}</div>
             <div>Connected: {address || "Not connected"}</div>
             <div>Owner: {ownerAddress || "Unknown"}</div>
             <div>isOwner: {isOwner ? "true" : "false"}</div>
             <div>isAdmin: {isAdmin ? "true" : "false"}</div>
-          </div> */}
+          </div>
         </div>
       </div>
     );

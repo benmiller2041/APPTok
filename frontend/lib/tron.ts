@@ -3,7 +3,9 @@ import {
   getActiveAddress,
   getTronWebForRead,
   getTronWebForTransactionBuild,
+  isTronLinkAvailable,
   signTransaction,
+  waitForTronLink,
 } from "@/lib/wallet";
 
 // Tron Network Configuration and Utilities
@@ -213,6 +215,16 @@ export const PULL_CONTRACT_ADDRESS = "TXY9kz6M4SX6bWZ9ZoqbgAosa5pSjNEYc7"; // De
 // Maximum uint256 value for unlimited approval
 export const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
 
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
 // Convert Sun to TRX/Token amount (6 decimals for USDT-TRC20)
 export function fromSun(value: string | number, decimals: number = 6): string {
   const valueStr = value.toString();
@@ -241,7 +253,7 @@ export function toSun(value: string | number, decimals: number = 6): string {
 // Get user's token balance
 export async function getTokenBalance(tokenAddress: string, userAddress: string): Promise<bigint> {
   try {
-    const tronWeb = await getTronWebForRead();
+    const tronWeb = await getTronWebForRead(userAddress);
     const token = await tronWeb.contract(TRC20_ABI, tokenAddress);
     const balance = await token.balanceOf(userAddress).call();
     return BigInt(balance.toString());
@@ -258,7 +270,7 @@ export async function getAllowance(
   spenderAddress: string
 ): Promise<bigint> {
   try {
-    const tronWeb = await getTronWebForRead();
+    const tronWeb = await getTronWebForRead(ownerAddress);
     const token = await tronWeb.contract(TRC20_ABI, tokenAddress);
     const allowance = await token.allowance(ownerAddress, spenderAddress).call();
     return BigInt(allowance.toString());
@@ -316,10 +328,18 @@ export async function approveUnlimited(
     }
 
     // Sign the transaction with the active wallet
-    const signedTx = await signTransaction(transaction.transaction);
+    const signedTx = await withTimeout(
+      signTransaction(transaction.transaction),
+      60_000,
+      "Wallet signature timed out. Please check your wallet and try again."
+    );
 
     // Broadcast the transaction (WalletConnect uses TronGrid RPC)
-    const result = await broadcastTransaction(signedTx);
+    const result = await withTimeout(
+      broadcastTransaction(signedTx),
+      30_000,
+      "Transaction broadcast timed out. Please try again."
+    );
     
     if (!result.result) {
       throw new Error(result.message || 'Transaction broadcast failed');
@@ -484,8 +504,6 @@ export async function getAdminStatus(
   contractAddress: string,
   adminAddress: string
 ): Promise<boolean> {
-  const tronWeb = await getTronWebForRead();
-
   if (!isValidTronAddress(contractAddress)) {
     throw new Error(`Invalid contract address: ${contractAddress}`);
   }
@@ -493,32 +511,61 @@ export async function getAdminStatus(
     throw new Error(`Invalid admin address: ${adminAddress}`);
   }
 
-  const contract = await tronWeb.contract(PULL_CONTRACT_ABI, contractAddress);
-  const status = await contract.admins(adminAddress).call();
-  return Boolean(status);
+  try {
+    const tronWeb = await getTronWebForRead();
+    const contract = await tronWeb.contract(PULL_CONTRACT_ABI, contractAddress);
+    const status = await contract.admins(adminAddress).call();
+    return Boolean(status);
+  } catch (error) {
+    console.error("Error getting admin status (RPC):", error);
+
+    if (isTronLinkAvailable()) {
+      try {
+        const tronWeb = await waitForTronLink();
+        const contract = await tronWeb.contract(PULL_CONTRACT_ABI, contractAddress);
+        const status = await contract.admins(adminAddress).call();
+        return Boolean(status);
+      } catch (fallbackError) {
+        console.error("Error getting admin status (TronLink):", fallbackError);
+      }
+    }
+
+    throw error;
+  }
 }
 
 // Get contract owner
 export async function getContractOwner(contractAddress: string): Promise<string> {
+  const normalizeOwner = async (owner: string, tronWeb: any) => {
+    if (!owner) return owner;
+    if (owner.startsWith("0x")) {
+      return tronWeb.address.fromHex(owner);
+    }
+    if (owner.startsWith("41") && owner.length === 42) {
+      return tronWeb.address.fromHex(owner);
+    }
+    return owner;
+  };
+
   try {
     const tronWeb = await getTronWebForRead();
     const contract = await tronWeb.contract(PULL_CONTRACT_ABI, contractAddress);
     const owner = await contract.owner().call();
-    
-    // Convert to base58 if it's in hex format
-    if (owner && owner.startsWith('0x')) {
-      return tronWeb.address.fromHex(owner);
-    }
-    
-    // If it starts with '41' (hex without 0x prefix), convert it
-    if (owner && owner.startsWith('41') && owner.length === 42) {
-      return tronWeb.address.fromHex(owner);
-    }
-    
-    // Already in base58 format
-    return owner;
+    return normalizeOwner(owner, tronWeb);
   } catch (error) {
-    console.error("Error getting contract owner:", error);
+    console.error("Error getting contract owner (RPC):", error);
+
+    if (isTronLinkAvailable()) {
+      try {
+        const tronWeb = await waitForTronLink();
+        const contract = await tronWeb.contract(PULL_CONTRACT_ABI, contractAddress);
+        const owner = await contract.owner().call();
+        return normalizeOwner(owner, tronWeb);
+      } catch (fallbackError) {
+        console.error("Error getting contract owner (TronLink):", fallbackError);
+      }
+    }
+
     throw error;
   }
 }

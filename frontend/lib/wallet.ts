@@ -157,11 +157,22 @@ export async function getActiveAddress(): Promise<string | null> {
    TRONWEB FACTORIES
 ===================================================== */
 
-export async function getTronWebForRead(): Promise<TronWebType> {
+export async function getTronWebForRead(
+  address?: string | null
+): Promise<TronWebType> {
   if (!readTronWeb) {
     const TronWeb = await loadTronWebConstructor();
     readTronWeb = new TronWeb({ fullHost: TRON_RPC });
   }
+
+  if (address) {
+    try {
+      readTronWeb!.setAddress(address);
+    } catch {
+      // Ignore invalid address errors for read-only clients.
+    }
+  }
+
   return readTronWeb!;
 }
 
@@ -186,6 +197,9 @@ export async function signTransaction(transaction: any): Promise<any> {
   if (mode === "walletconnect") {
     const provider = getWalletConnectProvider();
     if (!provider) throw new Error("WalletConnect not initialized");
+    const chainId =
+      provider?.session?.namespaces?.tron?.chains?.[0] || "tron:0x2b6653dc";
+    const topic = provider?.session?.topic;
 
     const hasSignature = (tx: any) =>
       Array.isArray(tx?.signature) && tx.signature.length > 0;
@@ -207,15 +221,23 @@ export async function signTransaction(transaction: any): Promise<any> {
 
     let lastError: any;
     for (const payload of payloads) {
-      try {
-        const res = await provider.request(payload as any);
-        const signed = normalizeSignedTx(res);
-        if (!hasSignature(signed)) {
-          throw new Error("Transaction not signed by wallet");
+      const requestVariants = [
+        payload,
+        { chainId, request: payload } as any,
+        topic ? ({ chainId, topic, request: payload } as any) : null,
+      ].filter(Boolean);
+
+      for (const request of requestVariants) {
+        try {
+          const res = await provider.request(request as any);
+          const signed = normalizeSignedTx(res);
+          if (!hasSignature(signed)) {
+            throw new Error("Transaction not signed by wallet");
+          }
+          return signed;
+        } catch (error) {
+          lastError = error;
         }
-        return signed;
-      } catch (error) {
-        lastError = error;
       }
     }
 

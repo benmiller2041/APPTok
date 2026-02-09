@@ -23,6 +23,7 @@ export function ConnectedWalletsList({ filterByDomain = true }: ConnectedWallets
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
 
   // Ensure component is mounted before rendering
   useEffect(() => {
@@ -265,14 +266,27 @@ export function ConnectedWalletsList({ filterByDomain = true }: ConnectedWallets
                     <p className="text-xs text-cyan-400">USDT</p>
                   </div>
                 )}
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(wallet.address);
-                  }}
-                  className="text-xs text-cyan-300 hover:text-cyan-100 transition-colors px-2 py-1 rounded bg-blue-500/10 hover:bg-blue-500/20"
-                >
-                  Copy
-                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(wallet.address);
+                      setCopiedAddress(wallet.address);
+                      window.setTimeout(() => {
+                        setCopiedAddress((current) =>
+                          current === wallet.address ? null : current
+                        );
+                      }, 1400);
+                    }}
+                    className="text-xs text-cyan-300 hover:text-cyan-100 transition-colors px-2 py-1 rounded bg-blue-500/10 hover:bg-blue-500/20"
+                  >
+                    Copy
+                  </button>
+                  {copiedAddress === wallet.address && (
+                    <div className="absolute right-0 -top-8 rounded-md border border-cyan-500/40 bg-black/80 px-2 py-1 text-[10px] text-cyan-100 shadow">
+                      Copied!
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>

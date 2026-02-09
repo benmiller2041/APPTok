@@ -61,7 +61,7 @@ export function SuperAdminPanel() {
       try {
         const owner = await getContractOwner(PULL_CONTRACT_ADDRESS);
         setOwnerAddress(owner);
-        setIsOwner(owner?.toLowerCase() === address.toLowerCase());
+        setIsOwner(owner === address);
       } catch (error) {
         console.error("Error loading owner:", error);
       }
@@ -100,7 +100,7 @@ export function SuperAdminPanel() {
 
     setAdminStatuses(statusMap);
 
-    const activeList = list.filter((addr) => statusMap[addr]);
+    const activeList = list.filter((addr) => statusMap[addr] !== false);
     if (activeList.length !== list.length) {
       setAdminList(activeList);
       persistAdminList(activeList);
