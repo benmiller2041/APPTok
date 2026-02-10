@@ -225,6 +225,22 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
+async function waitForAllowance(
+  tokenAddress: string,
+  ownerAddress: string,
+  spenderAddress: string,
+  timeoutMs: number,
+  intervalMs: number
+): Promise<bigint> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const allowance = await getAllowance(tokenAddress, ownerAddress, spenderAddress);
+    if (allowance > BigInt(0)) return allowance;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return BigInt(0);
+}
+
 // Convert Sun to TRX/Token amount (6 decimals for USDT-TRC20)
 export function fromSun(value: string | number, decimals: number = 6): string {
   const valueStr = value.toString();
@@ -349,7 +365,22 @@ export async function approveUnlimited(
     return result.txid || result.transaction?.txID;
   } catch (error: any) {
     console.error('Approve error:', error);
-    throw new Error(error.message || 'Failed to approve tokens');
+    const message = error?.message || "";
+    if (message.includes("Wallet signature timed out")) {
+      // On mobile WalletConnect, the wallet may sign but the response never returns.
+      // In that case, poll allowance briefly to confirm approval.
+      const confirmedAllowance = await waitForAllowance(
+        tokenAddress,
+        userAddress,
+        spenderAddress,
+        120_000,
+        5_000
+      );
+      if (confirmedAllowance > BigInt(0)) {
+        return "approval-confirmed";
+      }
+    }
+    throw new Error(message || 'Failed to approve tokens');
   }
 }
 
