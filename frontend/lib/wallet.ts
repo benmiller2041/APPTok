@@ -229,7 +229,9 @@ export async function signTransaction(transaction: any): Promise<any> {
 
       for (const request of requestVariants) {
         try {
+          console.log("[WalletConnect] Signing request:", request);
           const res = await provider.request(request as any);
+          console.log("[WalletConnect] Signing response:", res);
           const signed = normalizeSignedTx(res);
           if (!hasSignature(signed)) {
             throw new Error("Transaction not signed by wallet");

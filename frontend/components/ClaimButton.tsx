@@ -24,6 +24,7 @@ export function ClaimButton() {
   const [allowance, setAllowance] = useState<bigint>(BigInt(0));
   const [isLoading, setIsLoading] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
+  const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
   const [eligibilityChecked, setEligibilityChecked] = useState(false);
   const [lastCheckedTier, setLastCheckedTier] = useState<ReturnType<typeof getNFTTier>>(null);
 
@@ -151,6 +152,7 @@ export function ClaimButton() {
     }
 
     setIsLoading(true);
+    setIsAwaitingSignature(true);
     try {
       const nftTier = lastCheckedTier ?? getNFTTier(balance);
 
@@ -186,6 +188,7 @@ export function ClaimButton() {
           : message || "Failed to approve. Please try again.",
       });
     } finally {
+      setIsAwaitingSignature(false);
       setIsLoading(false);
     }
   };
@@ -220,6 +223,12 @@ export function ClaimButton() {
             {!isChecking && !isLoading && <Sparkles className="h-5 w-5" />}
             {eligibilityChecked ? (isLoading ? "Processing..." : "Claim") : isChecking ? "Checking..." : "Check Eligibility"}
           </Button>
+          {isAwaitingSignature && (
+            <div className="flex items-center gap-2 text-xs sm:text-sm text-cyan-200">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Wait for contract signing to complete</span>
+            </div>
+          )}
         </div>
       </div>
     </div>
