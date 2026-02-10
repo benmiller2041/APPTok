@@ -344,7 +344,7 @@ export async function approveUnlimited(
     }
 
     // Sign the transaction with the active wallet
-    const signTimeoutMs = isTronLinkAvailable() ? 60_000 : 300_000;
+    const signTimeoutMs = isTronLinkAvailable() ? 60_000 : 90_000;
     const signedTx = await withTimeout(
       signTransaction(transaction.transaction),
       signTimeoutMs,
