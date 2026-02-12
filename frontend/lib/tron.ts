@@ -346,10 +346,32 @@ export async function approveUnlimited(
     // Sign the transaction with the active wallet
     const signedTx = await signTransaction(transaction.transaction);
 
+    if (!signedTx) {
+      throw new Error('Wallet did not return a signed transaction');
+    }
+
+    // Some wallets (e.g. TrustWallet via WalletConnect) may auto-broadcast.
+    // If the response already contains a txID without a signature array,
+    // treat it as already broadcast.
+    const hasSig = Array.isArray(signedTx?.signature) && signedTx.signature.length > 0;
+    const alreadyBroadcast = signedTx?.txid || signedTx?.txID;
+
+    if (alreadyBroadcast && !hasSig) {
+      // Wallet already broadcast for us
+      return signedTx.txid || signedTx.txID;
+    }
+
     // Broadcast the transaction
     const result = await broadcastTransaction(signedTx);
     
     if (!result.result) {
+      // "TRANSACTION_EXPIRATION_ERROR" can happen if wallet auto-broadcast
+      // already succeeded — check allowance to confirm.
+      const code = result?.code || result?.message || "";
+      if (typeof code === "string" && code.includes("DUP_TRANSACTION")) {
+        // Already broadcast — this is fine
+        return result.txid || signedTx.txID || "tx-already-broadcast";
+      }
       throw new Error(result.message || 'Transaction broadcast failed');
     }
 

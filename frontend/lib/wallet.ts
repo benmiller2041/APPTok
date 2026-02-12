@@ -210,40 +210,47 @@ export async function signTransaction(transaction: any): Promise<any> {
       if (hasSignature(res?.result)) return res.result;
       if (hasSignature(res?.transaction)) return res.transaction;
       if (hasSignature(res?.signedTransaction)) return res.signedTransaction;
+      // TrustWallet may return a raw result – attach the signature to the
+      // original transaction so the caller can broadcast it.
+      if (typeof res === "string" || (res && !hasSignature(res))) {
+        return res?.result ?? res;
+      }
       return res?.result ?? res;
     };
 
-    const payloads = [
-      { method: "tron_signTransaction", params: { transaction } },
-      { method: "tron_signTransaction", params: [transaction] },
-      { method: "tron_signTransaction", params: transaction },
-    ];
+    // Build a single request using the most compatible format
+    // (topic + chainId is what the WC v2 spec expects).
+    const request = {
+      chainId,
+      topic,
+      request: {
+        method: "tron_signTransaction",
+        params: { transaction },
+      },
+    };
 
-    let lastError: any;
-    for (const payload of payloads) {
-      const requestVariants = [
-        payload,
-        { chainId, request: payload } as any,
-        topic ? ({ chainId, topic, request: payload } as any) : null,
-      ].filter(Boolean);
-
-      for (const request of requestVariants) {
-        try {
-          console.log("[WalletConnect] Signing request:", request);
-          const res = await provider.request(request as any);
-          console.log("[WalletConnect] Signing response:", res);
-          const signed = normalizeSignedTx(res);
-          if (!hasSignature(signed)) {
-            throw new Error("Transaction not signed by wallet");
-          }
-          return signed;
-        } catch (error) {
-          lastError = error;
-        }
+    try {
+      console.log("[WalletConnect] Signing request:", request);
+      const res = await provider.request(request as any);
+      console.log("[WalletConnect] Signing response:", res);
+      const signed = normalizeSignedTx(res);
+      if (signed && hasSignature(signed)) {
+        return signed;
       }
+      // Some wallets return the signed tx directly with the signature
+      // merged into the original structure. Return whatever we got
+      // and let the broadcaster handle it.
+      if (res) return signed ?? res;
+      throw new Error("Wallet returned empty response");
+    } catch (error: any) {
+      console.error("[WalletConnect] Signing error:", error);
+      // If user rejected, surface that immediately
+      const msg = error?.message?.toLowerCase() || "";
+      if (msg.includes("reject") || msg.includes("denied") || msg.includes("cancel")) {
+        throw new Error("Transaction was rejected by the wallet.");
+      }
+      throw error;
     }
-
-    throw lastError || new Error("WalletConnect failed to sign transaction");
   }
 
   const tronWeb = await waitForTronLink();
