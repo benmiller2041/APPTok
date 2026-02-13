@@ -213,32 +213,96 @@ export async function signTransaction(transaction: any): Promise<any> {
     const hasSignature = (tx: any) =>
       Array.isArray(tx?.signature) && tx.signature.length > 0;
 
-    const normalizeSignedTx = (res: any) => {
+    /**
+     * TrustWallet / various TRON wallets return signed transactions in
+     * wildly different shapes.  Walk every known wrapper until we find
+     * an object that carries a `signature` array.  If nothing matches,
+     * return whatever the wallet gave us and let broadcast try anyway.
+     */
+    const extractSignedTx = (res: any): any => {
       if (!res) return res;
+
+      // Direct hit
       if (hasSignature(res)) return res;
-      if (hasSignature(res?.result)) return res.result;
-      if (hasSignature(res?.transaction)) return res.transaction;
-      if (hasSignature(res?.signedTransaction)) return res.signedTransaction;
-      return res?.result ?? res;
+
+      // Common wrappers
+      const candidates = [
+        res?.result,
+        res?.transaction,
+        res?.signedTransaction,
+        res?.raw_data ? res : null,             // already the tx itself
+      ];
+      for (const c of candidates) {
+        if (c && hasSignature(c)) return c;
+      }
+
+      // TrustWallet sometimes returns { result: <signed-tx> } where
+      // <signed-tx> has signature.  Or it might nest one level deeper.
+      if (res?.result?.result && hasSignature(res.result.result)) {
+        return res.result.result;
+      }
+
+      // If we still found nothing but `res` looks like a transaction
+      // (has raw_data / raw_data_hex), the signature might be at a
+      // non-standard key.  Merge it back and hope broadcast accepts it.
+      if (res?.raw_data || res?.raw_data_hex) return res;
+      if (res?.result?.raw_data || res?.result?.raw_data_hex) return res.result;
+
+      return res;
     };
 
-    // Send a single request — do NOT race with a timeout or retry
-    // with different formats, as abandoned relay publishes corrupt
-    // the WalletConnect session state ("tag:undefined" errors).
-    // TrustWallet and most TRON wallets expect the raw tx object.
     try {
-      console.log("[WalletConnect] Requesting tron_signTransaction");
-      const res = await provider.request(
-        { method: "tron_signTransaction", params: transaction },
-        chainId
-      );
-      console.log("[WalletConnect] Signing response:", res);
+      console.log("[WalletConnect] Requesting tron_signTransaction, chainId:", chainId);
 
-      const signed = normalizeSignedTx(res);
-      if (signed && hasSignature(signed)) return signed;
-      // Some wallets return a non-standard shape — accept it if non-null
-      if (res) return signed ?? res;
-      throw new Error("Wallet returned empty response");
+      // TrustWallet and most TRON wallets via WalletConnect v2 expect
+      // params as { transaction: <tx-object> }.  Some older integrations
+      // expect the raw tx directly.  We try the wrapped format first —
+      // if the wallet doesn't recognise it, we fall back.
+      let res: any;
+      try {
+        res = await provider.request(
+          { method: "tron_signTransaction", params: { transaction } },
+          chainId
+        );
+      } catch (firstError: any) {
+        const msg1 = firstError?.message?.toLowerCase() || "";
+        // If user rejected, don't retry with a different format
+        if (msg1.includes("reject") || msg1.includes("denied") || msg1.includes("cancel")) {
+          throw firstError;
+        }
+        console.warn("[WalletConnect] Wrapped params failed, trying raw:", firstError);
+        // Fallback: send the raw transaction as params
+        res = await provider.request(
+          { method: "tron_signTransaction", params: transaction },
+          chainId
+        );
+      }
+
+      console.log("[WalletConnect] Raw signing response:", JSON.stringify(res).slice(0, 500));
+
+      const signed = extractSignedTx(res);
+
+      if (!signed) {
+        throw new Error("Wallet returned empty response");
+      }
+
+      // If the extracted object has a signature, great — return it.
+      if (hasSignature(signed)) {
+        return signed;
+      }
+
+      // Last resort: the wallet may have merged the signature into the
+      // original transaction object that was passed by reference.
+      // Check if our input `transaction` now has a signature.
+      if (hasSignature(transaction)) {
+        console.log("[WalletConnect] Signature found on original tx object");
+        return transaction;
+      }
+
+      // Return whatever we got — broadcastTransaction will surface
+      // a clear error if it's truly unsigned.
+      console.warn("[WalletConnect] No signature found, returning raw response");
+      return signed;
     } catch (error: any) {
       console.error("[WalletConnect] Signing error:", error);
       const msg = error?.message?.toLowerCase() || "";

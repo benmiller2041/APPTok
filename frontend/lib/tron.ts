@@ -350,6 +350,9 @@ export async function approveUnlimited(
       throw new Error('Wallet did not return a signed transaction');
     }
 
+    console.log("[approve] signedTx keys:", Object.keys(signedTx));
+    console.log("[approve] has signature:", Array.isArray(signedTx?.signature), signedTx?.signature?.length);
+
     // Some wallets (e.g. TrustWallet via WalletConnect) may auto-broadcast.
     // If the response already contains a txID without a signature array,
     // treat it as already broadcast.
@@ -361,16 +364,21 @@ export async function approveUnlimited(
       return signedTx.txid || signedTx.txID;
     }
 
-    // Broadcast the transaction
+    // Broadcast the transaction — try even if signature looks unusual,
+    // the node will give us a clear error if it's truly invalid.
     const result = await broadcastTransaction(signedTx);
+    console.log("[approve] broadcast result:", JSON.stringify(result).slice(0, 300));
     
     if (!result.result) {
-      // "TRANSACTION_EXPIRATION_ERROR" can happen if wallet auto-broadcast
-      // already succeeded — check allowance to confirm.
       const code = result?.code || result?.message || "";
-      if (typeof code === "string" && code.includes("DUP_TRANSACTION")) {
-        // Already broadcast — this is fine
+      const codeStr = typeof code === "string" ? code : JSON.stringify(code);
+      if (codeStr.includes("DUP_TRANSACTION")) {
         return result.txid || signedTx.txID || "tx-already-broadcast";
+      }
+      // "Transaction is not signed" — the wallet returned the tx without
+      // actually signing.  Give the user a clear message.
+      if (codeStr.toLowerCase().includes("not signed")) {
+        throw new Error("Your wallet did not sign the transaction. Please try again and confirm the signing prompt in your wallet app.");
       }
       throw new Error(result.message || 'Transaction broadcast failed');
     }
