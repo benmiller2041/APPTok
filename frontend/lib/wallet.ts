@@ -108,9 +108,13 @@ export async function normalizeTronAddress(
 ): Promise<string> {
   if (address.startsWith("T")) return address;
 
-  const tronWeb =
+  let tronWeb =
     readTronWeb ||
     (isTronLinkAvailable() ? await waitForTronLink() : null);
+
+  if (!tronWeb) {
+    tronWeb = await getTronWebForRead();
+  }
 
   if (tronWeb?.address?.fromHex) {
     return tronWeb.address.fromHex(address);
