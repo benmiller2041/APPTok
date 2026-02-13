@@ -52,7 +52,13 @@ export function TronProvider({ children }: { children: ReactNode }) {
 
     let cancelled = false;
     const detect = async () => {
-      await initWalletConnectSession();
+      try {
+        await initWalletConnectSession();
+      } catch (e) {
+        // WC init can fail with stale storage — not fatal, user can reconnect
+        console.warn("WalletConnect session restore failed:", e);
+      }
+
       if (isWalletConnectActive()) {
         const provider = getWalletConnectProvider();
         const accounts = provider?.session?.namespaces?.tron?.accounts || [];
