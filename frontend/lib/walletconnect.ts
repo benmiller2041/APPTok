@@ -57,6 +57,20 @@ export async function initWalletConnect() {
 }
 
 export async function connectWalletConnect() {
+  // If there's a stale provider with no active session, discard it so
+  // initWalletConnect() creates a fresh one.  This prevents the
+  // "Failed to publish custom payload … tag:undefined" relay error.
+  if (provider) {
+    const hasActiveSession =
+      provider.session?.topic &&
+      (provider.session?.namespaces?.tron?.accounts ?? []).length > 0;
+    if (!hasActiveSession) {
+      try { await provider.disconnect(); } catch { /* ignore */ }
+      provider = null;
+      displayUriListenerAttached = false;
+    }
+  }
+
   const wcProvider = await initWalletConnect();
 
   let session;
@@ -64,43 +78,39 @@ export async function connectWalletConnect() {
     session = await wcProvider.connect({
       optionalNamespaces: {
         tron: {
-          chains: ["tron:0x2b6653dc"], // Correct CAIP-2 for TRON Mainnet
+          chains: ["tron:0x2b6653dc"],
           methods: [
             "tron_signTransaction",
             "tron_signMessage",
             "tron_signMessageV2",
-            // Add "personal_sign" or others if your wallets need them
           ],
-          events: ["chainChanged", "accountsChanged"], // Optional but useful
+          events: ["chainChanged", "accountsChanged"],
         },
       },
     });
   } catch (error) {
     modal?.closeModal();
+    // If the relay is in a bad state, reset everything so the next
+    // attempt starts completely fresh.
+    try { await wcProvider.disconnect(); } catch { /* ignore */ }
+    provider = null;
+    displayUriListenerAttached = false;
     throw error;
   }
 
-  // No .enable() needed — connect() waits for approval
   modal?.closeModal();
   if (!session) throw new Error("Failed to connect wallet");
 
   console.log("Connected TRON session:", session.namespaces.tron);
-
-  // To sign (example usage later in your app):
-  // const result = await wcProvider.request({
-  //   chainId: "tron:0x2b6653dc",
-  //   topic: session.topic,
-  //   request: { method: "tron_signTransaction", params: [tx] }
-  // });
-
   return wcProvider;
 }
 
 
 export async function disconnectWalletConnect() {
   if (provider) {
-    await provider.disconnect();
+    try { await provider.disconnect(); } catch { /* ignore */ }
     provider = null;
+    displayUriListenerAttached = false;
   }
 }
 

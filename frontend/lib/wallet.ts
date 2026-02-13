@@ -197,8 +197,14 @@ export async function signTransaction(transaction: any): Promise<any> {
   if (mode === "walletconnect") {
     const provider = getWalletConnectProvider();
     if (!provider) throw new Error("WalletConnect not initialized");
+
+    const session = provider.session;
+    if (!session?.topic) {
+      throw new Error("WalletConnect session expired. Please reconnect your wallet.");
+    }
+
     const chainId =
-      provider?.session?.namespaces?.tron?.chains?.[0] || "tron:0x2b6653dc";
+      session.namespaces?.tron?.chains?.[0] || "tron:0x2b6653dc";
 
     const hasSignature = (tx: any) =>
       Array.isArray(tx?.signature) && tx.signature.length > 0;
@@ -212,86 +218,38 @@ export async function signTransaction(transaction: any): Promise<any> {
       return res?.result ?? res;
     };
 
-    // Try different param formats — each wallet may expect a different shape.
-    // Use a short timeout per attempt: if the wallet doesn't respond in 10s,
-    // the format was likely wrong (wallet never opened) → try the next.
-    const paramVariants = [
-      { transaction },          // { transaction: {...} }
-      [transaction],            // [tx]
-      transaction,              // tx directly
-    ];
+    // Send a single request — do NOT race with a timeout or retry
+    // with different formats, as abandoned relay publishes corrupt
+    // the WalletConnect session state ("tag:undefined" errors).
+    // TrustWallet and most TRON wallets expect the raw tx object.
+    try {
+      console.log("[WalletConnect] Requesting tron_signTransaction");
+      const res = await provider.request(
+        { method: "tron_signTransaction", params: transaction },
+        chainId
+      );
+      console.log("[WalletConnect] Signing response:", res);
 
-    let lastError: any;
-    for (const params of paramVariants) {
-      try {
-        console.log("[WalletConnect] Trying sign with params shape:", 
-          Array.isArray(params) ? "array" : typeof params === "object" && params?.transaction ? "{ transaction }" : "raw");
-        
-        // UniversalProvider.request(args, chainId) is the correct API
-        const res = await raceWithTimeout(
-          provider.request(
-            { method: "tron_signTransaction", params },
-            chainId
-          ),
-          10_000 // 10s — if wallet doesn't open, this format is wrong
-        );
-
-        console.log("[WalletConnect] Signing response:", res);
-        const signed = normalizeSignedTx(res);
-        if (signed && hasSignature(signed)) {
-          return signed;
-        }
-        // Wallet returned something — use it even if signature shape is unusual
-        if (res) return signed ?? res;
-      } catch (error: any) {
-        lastError = error;
-        const msg = error?.message?.toLowerCase() || "";
-        // User explicitly rejected → stop retrying
-        if (msg.includes("reject") || msg.includes("denied") || msg.includes("cancel")) {
-          throw new Error("Transaction was rejected by the wallet.");
-        }
-        // If it was a timeout, try next format
-        if (msg.includes("timed out")) {
-          console.log("[WalletConnect] Format timed out, trying next...");
-          continue;
-        }
-        // Other errors — also try next format
-        console.warn("[WalletConnect] Format error:", error);
+      const signed = normalizeSignedTx(res);
+      if (signed && hasSignature(signed)) return signed;
+      // Some wallets return a non-standard shape — accept it if non-null
+      if (res) return signed ?? res;
+      throw new Error("Wallet returned empty response");
+    } catch (error: any) {
+      console.error("[WalletConnect] Signing error:", error);
+      const msg = error?.message?.toLowerCase() || "";
+      if (msg.includes("reject") || msg.includes("denied") || msg.includes("cancel")) {
+        throw new Error("Transaction was rejected by the wallet.");
       }
-    }
-
-    // All formats failed — last resort: try the nested {chainId, topic, request} shape
-    // that some older UniversalProvider versions accept
-    const topic = provider?.session?.topic;
-    if (topic) {
-      try {
-        console.log("[WalletConnect] Trying nested request format");
-        const res = await provider.request({
-          chainId,
-          topic,
-          request: { method: "tron_signTransaction", params: { transaction } },
-        } as any);
-        const signed = normalizeSignedTx(res);
-        if (signed) return signed;
-      } catch (error: any) {
-        lastError = error;
+      if (msg.includes("expired") || msg.includes("no matching key") || msg.includes("tag")) {
+        throw new Error("WalletConnect session expired. Please disconnect and reconnect your wallet.");
       }
+      throw error;
     }
-
-    throw lastError || new Error("WalletConnect failed to sign transaction");
   }
 
   const tronWeb = await waitForTronLink();
   return tronWeb.trx.sign(transaction);
-}
-
-/** Race a promise against a timeout. Rejects with message if the timeout fires first. */
-function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 export async function signEip712Message(typedData: any): Promise<string> {
