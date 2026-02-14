@@ -384,3 +384,75 @@ export async function broadcastTransaction(signedTx: any): Promise<any> {
   const tronWeb = await getTronWebForRead();
   return tronWeb.trx.sendRawTransaction(signedTx);
 }
+
+/* =====================================================
+   SIGN + BROADCAST (handles TrustWallet auto-broadcast)
+===================================================== */
+
+/**
+ * Sign a transaction and broadcast it, correctly handling wallets like
+ * TrustWallet that sign **and** broadcast atomically via WalletConnect.
+ *
+ * Returns the transaction ID string on success.
+ */
+export async function signAndBroadcast(transaction: any): Promise<string> {
+  const signedTx = await signTransaction(transaction);
+
+  if (!signedTx) {
+    throw new Error("Wallet did not return a signed transaction");
+  }
+
+  // TrustWallet may return a plain txid string when it auto-broadcasts.
+  if (typeof signedTx === "string") {
+    console.log("[signAndBroadcast] Wallet returned plain string (auto-broadcast txid):", signedTx);
+    return signedTx;
+  }
+
+  const hasSig =
+    Array.isArray(signedTx?.signature) && signedTx.signature.length > 0;
+  const txId = signedTx?.txid || signedTx?.txID;
+
+  // If we got a txid but no signature array the wallet already broadcast.
+  if (txId && !hasSig) {
+    console.log("[signAndBroadcast] Auto-broadcast detected (txid, no sig):", txId);
+    return txId;
+  }
+
+  // If the object has neither signature nor raw_data it's likely a bare
+  // success ack from an auto-broadcasting wallet (e.g. { result: true }).
+  if (!hasSig && !signedTx?.raw_data && !signedTx?.raw_data_hex) {
+    // Check whether the original tx object was mutated with a signature
+    if (Array.isArray(transaction?.signature) && transaction.signature.length > 0) {
+      console.log("[signAndBroadcast] Signature found on original tx (mutated by wallet)");
+      const res = await broadcastTransaction(transaction);
+      if (res.result) return res.txid || res.transaction?.txID;
+    }
+    // Nothing useful to broadcast – assume wallet handled it
+    if (txId) return txId;
+    console.warn("[signAndBroadcast] Wallet returned unrecognised response, assuming auto-broadcast");
+    return signedTx?.result?.txid || signedTx?.result?.txID || "tx-auto-broadcast";
+  }
+
+  // Normal path: broadcast the signed transaction
+  const result = await broadcastTransaction(signedTx);
+  console.log("[signAndBroadcast] Broadcast result:", JSON.stringify(result).slice(0, 300));
+
+  if (!result.result) {
+    const code = result?.code || result?.message || "";
+    const codeStr = typeof code === "string" ? code : JSON.stringify(code);
+
+    if (codeStr.includes("DUP_TRANSACTION")) {
+      return result.txid || txId || "tx-already-broadcast";
+    }
+
+    if (codeStr.toLowerCase().includes("not signed")) {
+      throw new Error(
+        "Your wallet did not sign the transaction. Please try again and confirm the signing prompt in your wallet app."
+      );
+    }
+
+    throw new Error(result.message || "Transaction broadcast failed");
+  }
+
+  return result.txid || result.transaction?.txID || txId;
+}

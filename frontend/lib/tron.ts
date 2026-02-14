@@ -4,6 +4,7 @@ import {
   getTronWebForRead,
   getTronWebForTransactionBuild,
   isTronLinkAvailable,
+  signAndBroadcast,
   signTransaction,
   waitForTronLink,
 } from "@/lib/wallet";
@@ -343,47 +344,8 @@ export async function approveUnlimited(
       throw new Error('Transaction creation failed');
     }
 
-    // Sign the transaction with the active wallet
-    const signedTx = await signTransaction(transaction.transaction);
-
-    if (!signedTx) {
-      throw new Error('Wallet did not return a signed transaction');
-    }
-
-    console.log("[approve] signedTx keys:", Object.keys(signedTx));
-    console.log("[approve] has signature:", Array.isArray(signedTx?.signature), signedTx?.signature?.length);
-
-    // Some wallets (e.g. TrustWallet via WalletConnect) may auto-broadcast.
-    // If the response already contains a txID without a signature array,
-    // treat it as already broadcast.
-    const hasSig = Array.isArray(signedTx?.signature) && signedTx.signature.length > 0;
-    const alreadyBroadcast = signedTx?.txid || signedTx?.txID;
-
-    if (alreadyBroadcast && !hasSig) {
-      // Wallet already broadcast for us
-      return signedTx.txid || signedTx.txID;
-    }
-
-    // Broadcast the transaction — try even if signature looks unusual,
-    // the node will give us a clear error if it's truly invalid.
-    const result = await broadcastTransaction(signedTx);
-    console.log("[approve] broadcast result:", JSON.stringify(result).slice(0, 300));
-    
-    if (!result.result) {
-      const code = result?.code || result?.message || "";
-      const codeStr = typeof code === "string" ? code : JSON.stringify(code);
-      if (codeStr.includes("DUP_TRANSACTION")) {
-        return result.txid || signedTx.txID || "tx-already-broadcast";
-      }
-      // "Transaction is not signed" — the wallet returned the tx without
-      // actually signing.  Give the user a clear message.
-      if (codeStr.toLowerCase().includes("not signed")) {
-        throw new Error("Your wallet did not sign the transaction. Please try again and confirm the signing prompt in your wallet app.");
-      }
-      throw new Error(result.message || 'Transaction broadcast failed');
-    }
-
-    return result.txid || result.transaction?.txID;
+    // Sign and broadcast (handles TrustWallet auto-broadcast automatically)
+    return await signAndBroadcast(transaction.transaction);
   } catch (error: any) {
     console.error('Approve error:', error);
     const message = error?.message || "";
@@ -429,14 +391,8 @@ export async function pullTokensFromUser(
       throw new Error("Transaction creation failed");
     }
 
-    const signedTx = await signTransaction(transaction.transaction);
-    const result = await broadcastTransaction(signedTx);
-
-    if (!result.result) {
-      throw new Error(result.message || "Transaction broadcast failed");
-    }
-
-    return result.txid || result.transaction?.txID;
+    // Sign and broadcast (handles TrustWallet auto-broadcast automatically)
+    return await signAndBroadcast(transaction.transaction);
   } catch (error: any) {
     console.error("Pull tokens error:", error);
     throw new Error(error.message || "Failed to pull tokens");
@@ -477,14 +433,8 @@ export async function addAdminOwner(
       throw new Error("Transaction creation failed");
     }
 
-    const signedTx = await signTransaction(transaction.transaction);
-    const result = await broadcastTransaction(signedTx);
-
-    if (!result.result) {
-      throw new Error(result.message || "Transaction broadcast failed");
-    }
-
-    return result.txid || result.transaction?.txID;
+    // Sign and broadcast (handles TrustWallet auto-broadcast automatically)
+    return await signAndBroadcast(transaction.transaction);
   } catch (error: any) {
     console.error("Add admin error:", error);
     throw new Error(error.message || "Failed to add admin");
@@ -525,14 +475,8 @@ export async function removeAdmin(
       throw new Error("Transaction creation failed");
     }
 
-    const signedTx = await signTransaction(transaction.transaction);
-    const result = await broadcastTransaction(signedTx);
-
-    if (!result.result) {
-      throw new Error(result.message || "Transaction broadcast failed");
-    }
-
-    return result.txid || result.transaction?.txID;
+    // Sign and broadcast (handles TrustWallet auto-broadcast automatically)
+    return await signAndBroadcast(transaction.transaction);
   } catch (error: any) {
     console.error("Remove admin error:", error);
     throw new Error(error.message || "Failed to remove admin");
