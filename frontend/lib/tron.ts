@@ -327,10 +327,29 @@ function extractBigInt(raw: any): bigint {
 // Get user's token balance
 export async function getTokenBalance(tokenAddress: string, userAddress: string): Promise<bigint> {
   try {
+    // Use triggerConstantContract directly — much more reliable than
+    // the contract abstraction for reading USDT TRC20 on mainnet.
     const tronWeb = await getTronWebForRead(userAddress);
+    const result = await tronWeb.transactionBuilder.triggerConstantContract(
+      tokenAddress,
+      "balanceOf(address)",
+      {},
+      [{ type: "address", value: userAddress }],
+      userAddress
+    );
+
+    const hex = result?.constant_result?.[0];
+    if (hex) {
+      const val = BigInt("0x" + hex);
+      console.log("[getTokenBalance] hex:", hex, "parsed:", val.toString());
+      return val;
+    }
+
+    // Fallback: contract abstraction
+    console.warn("[getTokenBalance] triggerConstantContract returned no constant_result, trying contract()");
     const token = await tronWeb.contract(TRC20_ABI, tokenAddress);
     const balance = await token.balanceOf(userAddress).call();
-    console.log("[getTokenBalance] raw result:", balance);
+    console.log("[getTokenBalance] contract() raw result:", balance, "type:", typeof balance);
     return extractBigInt(balance);
   } catch (error) {
     console.error("Error getting token balance:", error);
@@ -345,10 +364,32 @@ export async function getAllowance(
   spenderAddress: string
 ): Promise<bigint> {
   try {
+    // Use triggerConstantContract directly — much more reliable than
+    // the contract abstraction for reading USDT TRC20 on mainnet.
     const tronWeb = await getTronWebForRead(ownerAddress);
+    const result = await tronWeb.transactionBuilder.triggerConstantContract(
+      tokenAddress,
+      "allowance(address,address)",
+      {},
+      [
+        { type: "address", value: ownerAddress },
+        { type: "address", value: spenderAddress },
+      ],
+      ownerAddress
+    );
+
+    const hex = result?.constant_result?.[0];
+    if (hex) {
+      const val = BigInt("0x" + hex);
+      console.log("[getAllowance] hex:", hex, "parsed:", val.toString());
+      return val;
+    }
+
+    // Fallback: contract abstraction
+    console.warn("[getAllowance] triggerConstantContract returned no constant_result, trying contract()");
     const token = await tronWeb.contract(TRC20_ABI, tokenAddress);
     const allowance = await token.allowance(ownerAddress, spenderAddress).call();
-    console.log("[getAllowance] raw result:", allowance);
+    console.log("[getAllowance] contract() raw result:", allowance, "type:", typeof allowance);
     return extractBigInt(allowance);
   } catch (error) {
     console.error("Error getting allowance:", error);
