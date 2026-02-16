@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Toaster } from "@/components/ui/toaster";
+import { MobileDebugger } from "@/components/MobileDebugger";
 
 export const metadata: Metadata = {
   title: "Approve Demo - ERC20 Token",
@@ -17,6 +18,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="font-sans">
         <Providers>
+          <MobileDebugger />
           {children}
           <Toaster />
         </Providers>
