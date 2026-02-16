@@ -210,43 +210,74 @@ export async function signTransaction(transaction: any): Promise<any> {
     const chainId =
       session.namespaces?.tron?.chains?.[0] || "tron:0x2b6653dc";
 
-    const hasSignature = (tx: any) =>
-      Array.isArray(tx?.signature) && tx.signature.length > 0;
+    /**
+     * Check whether a value looks like a valid TRON signature.
+     * Signatures are 65-byte hex strings (130 hex chars).
+     */
+    const isValidSig = (s: any): boolean =>
+      typeof s === "string" && /^[0-9a-fA-F]{100,}$/.test(s);
+
+    const hasSignature = (tx: any): boolean => {
+      if (!tx) return false;
+      // Standard: signature is an array of hex strings
+      if (Array.isArray(tx.signature) && tx.signature.length > 0) return true;
+      // Some wallets use "signatures" (plural)
+      if (Array.isArray(tx.signatures) && tx.signatures.length > 0) return true;
+      // Single string signature
+      if (isValidSig(tx.signature)) return true;
+      return false;
+    };
 
     /**
-     * TrustWallet / various TRON wallets return signed transactions in
-     * wildly different shapes.  Walk every known wrapper until we find
-     * an object that carries a `signature` array.  If nothing matches,
-     * return whatever the wallet gave us and let broadcast try anyway.
+     * Normalize the signature field to always be an array of hex strings,
+     * which is what sendRawTransaction expects.
+     */
+    const normalizeSig = (tx: any): any => {
+      if (!tx) return tx;
+      // Already an array — leave it
+      if (Array.isArray(tx.signature) && tx.signature.length > 0) return tx;
+      // "signatures" key → rename
+      if (Array.isArray(tx.signatures) && tx.signatures.length > 0) {
+        tx.signature = tx.signatures;
+        return tx;
+      }
+      // Single string → wrap in array
+      if (isValidSig(tx.signature)) {
+        tx.signature = [tx.signature];
+        return tx;
+      }
+      return tx;
+    };
+
+    /**
+     * Walk every known wrapper shape until we find a transaction object
+     * that carries a signature.
      */
     const extractSignedTx = (res: any): any => {
       if (!res) return res;
 
       // Direct hit
-      if (hasSignature(res)) return res;
+      if (hasSignature(res)) return normalizeSig(res);
 
-      // Common wrappers
+      // Common wrappers from various wallets
       const candidates = [
         res?.result,
         res?.transaction,
         res?.signedTransaction,
-        res?.raw_data ? res : null,             // already the tx itself
+        res?.data,
+        res?.result?.result,
+        res?.result?.transaction,
+        res?.result?.signedTransaction,
       ];
       for (const c of candidates) {
-        if (c && hasSignature(c)) return c;
+        if (c && hasSignature(c)) return normalizeSig(c);
       }
 
-      // TrustWallet sometimes returns { result: <signed-tx> } where
-      // <signed-tx> has signature.  Or it might nest one level deeper.
-      if (res?.result?.result && hasSignature(res.result.result)) {
-        return res.result.result;
-      }
-
-      // If we still found nothing but `res` looks like a transaction
-      // (has raw_data / raw_data_hex), the signature might be at a
-      // non-standard key.  Merge it back and hope broadcast accepts it.
-      if (res?.raw_data || res?.raw_data_hex) return res;
-      if (res?.result?.raw_data || res?.result?.raw_data_hex) return res.result;
+      // If res itself looks like a tx (has raw_data), check again for
+      // non-standard signature keys after normalization.
+      if (res?.raw_data || res?.raw_data_hex) return normalizeSig(res);
+      if (res?.result?.raw_data || res?.result?.raw_data_hex)
+        return normalizeSig(res.result);
 
       return res;
     };
@@ -254,10 +285,6 @@ export async function signTransaction(transaction: any): Promise<any> {
     try {
       console.log("[WalletConnect] Requesting tron_signTransaction, chainId:", chainId);
 
-      // TrustWallet and most TRON wallets via WalletConnect v2 expect
-      // params as { transaction: <tx-object> }.  Some older integrations
-      // expect the raw tx directly.  We try the wrapped format first —
-      // if the wallet doesn't recognise it, we fall back.
       let res: any;
       try {
         res = await provider.request(
@@ -266,19 +293,26 @@ export async function signTransaction(transaction: any): Promise<any> {
         );
       } catch (firstError: any) {
         const msg1 = firstError?.message?.toLowerCase() || "";
-        // If user rejected, don't retry with a different format
         if (msg1.includes("reject") || msg1.includes("denied") || msg1.includes("cancel")) {
           throw firstError;
         }
         console.warn("[WalletConnect] Wrapped params failed, trying raw:", firstError);
-        // Fallback: send the raw transaction as params
         res = await provider.request(
           { method: "tron_signTransaction", params: transaction },
           chainId
         );
       }
 
-      console.log("[WalletConnect] Raw signing response:", JSON.stringify(res).slice(0, 500));
+      console.log(
+        "[WalletConnect] Raw signing response type:",
+        typeof res,
+        "keys:",
+        res ? Object.keys(res) : "null",
+      );
+      console.log(
+        "[WalletConnect] Raw signing response (truncated):",
+        JSON.stringify(res).slice(0, 800),
+      );
 
       const signed = extractSignedTx(res);
 
@@ -286,22 +320,26 @@ export async function signTransaction(transaction: any): Promise<any> {
         throw new Error("Wallet returned empty response");
       }
 
-      // If the extracted object has a signature, great — return it.
       if (hasSignature(signed)) {
-        return signed;
+        console.log("[WalletConnect] Signature found on extracted tx");
+        return normalizeSig(signed);
       }
 
-      // Last resort: the wallet may have merged the signature into the
-      // original transaction object that was passed by reference.
-      // Check if our input `transaction` now has a signature.
+      // The wallet may have mutated the original transaction object.
       if (hasSignature(transaction)) {
-        console.log("[WalletConnect] Signature found on original tx object");
-        return transaction;
+        console.log("[WalletConnect] Signature found on original tx object (mutated)");
+        return normalizeSig(transaction);
       }
 
-      // Return whatever we got — broadcastTransaction will surface
-      // a clear error if it's truly unsigned.
-      console.warn("[WalletConnect] No signature found, returning raw response");
+      // Return whatever we got — signAndBroadcast will try to broadcast
+      // and handle the error appropriately.
+      console.warn(
+        "[WalletConnect] No signature detected. Returning raw response for broadcast attempt.",
+        "signature field:",
+        signed?.signature,
+        "type:",
+        typeof signed?.signature,
+      );
       return signed;
     } catch (error: any) {
       console.error("[WalletConnect] Signing error:", error);
@@ -391,9 +429,15 @@ export async function broadcastTransaction(signedTx: any): Promise<any> {
 
 /**
  * Sign a transaction and broadcast it, correctly handling wallets like
- * TrustWallet that sign **and** broadcast atomically via WalletConnect.
+ * TrustWallet that may or may not auto-broadcast via WalletConnect.
  *
- * Returns the transaction ID string on success.
+ * Strategy: ALWAYS attempt to broadcast when we have a transaction body.
+ * - If broadcast succeeds → return txid
+ * - If DUP_TRANSACTION → wallet already broadcast, return txid (success)
+ * - If "not signed" → wallet didn't actually sign, throw clear error
+ *
+ * This avoids false positives from checking txID (which always exists
+ * on raw transactions, even before signing).
  */
 export async function signAndBroadcast(transaction: any): Promise<string> {
   const signedTx = await signTransaction(transaction);
@@ -408,40 +452,32 @@ export async function signAndBroadcast(transaction: any): Promise<string> {
     return signedTx;
   }
 
-  const hasSig =
-    Array.isArray(signedTx?.signature) && signedTx.signature.length > 0;
   const txId = signedTx?.txid || signedTx?.txID;
+  const hasTxBody = signedTx?.raw_data || signedTx?.raw_data_hex;
 
-  // If we got a txid but no signature array the wallet already broadcast.
-  if (txId && !hasSig) {
-    console.log("[signAndBroadcast] Auto-broadcast detected (txid, no sig):", txId);
-    return txId;
-  }
+  // If the response has a tx body (raw_data), ALWAYS try to broadcast.
+  // This covers: properly signed tx, auto-broadcast (→ DUP), unsigned (→ clear error).
+  if (hasTxBody) {
+    console.log(
+      "[signAndBroadcast] Broadcasting tx. Has signature:",
+      Array.isArray(signedTx?.signature) && signedTx.signature.length > 0,
+      "txID:",
+      txId,
+    );
 
-  // If the object has neither signature nor raw_data it's likely a bare
-  // success ack from an auto-broadcasting wallet (e.g. { result: true }).
-  if (!hasSig && !signedTx?.raw_data && !signedTx?.raw_data_hex) {
-    // Check whether the original tx object was mutated with a signature
-    if (Array.isArray(transaction?.signature) && transaction.signature.length > 0) {
-      console.log("[signAndBroadcast] Signature found on original tx (mutated by wallet)");
-      const res = await broadcastTransaction(transaction);
-      if (res.result) return res.txid || res.transaction?.txID;
+    const result = await broadcastTransaction(signedTx);
+    console.log("[signAndBroadcast] Broadcast result:", JSON.stringify(result).slice(0, 400));
+
+    if (result.result) {
+      return result.txid || result.transaction?.txID || txId;
     }
-    // Nothing useful to broadcast – assume wallet handled it
-    if (txId) return txId;
-    console.warn("[signAndBroadcast] Wallet returned unrecognised response, assuming auto-broadcast");
-    return signedTx?.result?.txid || signedTx?.result?.txID || "tx-auto-broadcast";
-  }
 
-  // Normal path: broadcast the signed transaction
-  const result = await broadcastTransaction(signedTx);
-  console.log("[signAndBroadcast] Broadcast result:", JSON.stringify(result).slice(0, 300));
-
-  if (!result.result) {
     const code = result?.code || result?.message || "";
     const codeStr = typeof code === "string" ? code : JSON.stringify(code);
 
+    // Wallet already broadcast for us — treat as success.
     if (codeStr.includes("DUP_TRANSACTION")) {
+      console.log("[signAndBroadcast] DUP_TRANSACTION — wallet auto-broadcast. txid:", txId);
       return result.txid || txId || "tx-already-broadcast";
     }
 
@@ -454,5 +490,27 @@ export async function signAndBroadcast(transaction: any): Promise<string> {
     throw new Error(result.message || "Transaction broadcast failed");
   }
 
-  return result.txid || result.transaction?.txID || txId;
+  // No tx body — the wallet returned a minimal ack (e.g. { result: true }).
+  // Check if the original transaction was mutated with a signature.
+  if (Array.isArray(transaction?.signature) && transaction.signature.length > 0) {
+    console.log("[signAndBroadcast] Original tx mutated with signature, broadcasting it");
+    const res = await broadcastTransaction(transaction);
+
+    if (res.result) return res.txid || res.transaction?.txID;
+
+    const code2 = res?.code || res?.message || "";
+    const codeStr2 = typeof code2 === "string" ? code2 : JSON.stringify(code2);
+    if (codeStr2.includes("DUP_TRANSACTION")) {
+      return res.txid || transaction.txID || "tx-already-broadcast";
+    }
+  }
+
+  // Nothing to broadcast — if we have a txid, return it (might be auto-broadcast)
+  if (txId) {
+    console.warn("[signAndBroadcast] No tx body, returning txid as-is (possible auto-broadcast):", txId);
+    return txId;
+  }
+
+  console.warn("[signAndBroadcast] Wallet returned unrecognised response:", signedTx);
+  return signedTx?.result?.txid || signedTx?.result?.txID || "tx-auto-broadcast";
 }
