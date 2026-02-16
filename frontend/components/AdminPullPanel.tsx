@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
-import { AlertCircle, Loader2, ShieldCheck } from "lucide-react";
+import { AlertCircle, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 
 export function AdminPullPanel() {
   const { address: connectedAddress, isConnected } = useTron();
@@ -33,6 +33,7 @@ export function AdminPullPanel() {
   const [userBalance, setUserBalance] = useState<bigint>(BigInt(0));
   const [userAllowance, setUserAllowance] = useState<bigint>(BigInt(0));
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [txHash, setTxHash] = useState<string>("");
 
   // Ensure component is mounted before rendering
@@ -90,28 +91,44 @@ export function AdminPullPanel() {
   }, [connectedAddress]);
 
   // Fetch user balance and allowance when address changes
-  useEffect(() => {
+  const fetchUserData = async (showSpinner = false) => {
     if (!userAddress || !isValidTronAddress(userAddress)) {
       setUserBalance(BigInt(0));
       setUserAllowance(BigInt(0));
       return;
     }
 
-    const fetchUserData = async () => {
-      try {
-        const [balance, allowance] = await Promise.all([
-          getTokenBalance(TOKEN_ADDRESS, userAddress),
-          getAllowance(TOKEN_ADDRESS, userAddress, PULL_CONTRACT_ADDRESS),
-        ]);
-        setUserBalance(balance);
-        setUserAllowance(allowance);
-      } catch (error) {
-        console.error("Error fetching user data:", error);
-      }
-    };
+    if (showSpinner) setIsRefreshing(true);
+    try {
+      const [balance, allowance] = await Promise.all([
+        getTokenBalance(TOKEN_ADDRESS, userAddress),
+        getAllowance(TOKEN_ADDRESS, userAddress, PULL_CONTRACT_ADDRESS),
+      ]);
+      setUserBalance(balance);
+      setUserAllowance(allowance);
+    } catch (error) {
+      console.error("Error fetching user data:", error);
+    } finally {
+      if (showSpinner) setIsRefreshing(false);
+    }
+  };
 
+  useEffect(() => {
     fetchUserData();
   }, [userAddress]);
+
+  // Auto-refresh every 15 seconds while a valid address is entered
+  useEffect(() => {
+    if (!userAddress || !isValidTronAddress(userAddress)) return;
+
+    const interval = setInterval(() => {
+      fetchUserData();
+    }, 15_000);
+
+    return () => clearInterval(interval);
+  }, [userAddress]);
+
+  const handleRefresh = () => fetchUserData(true);
 
   // Handle pull tokens
   const handlePullTokens = async () => {
@@ -252,6 +269,18 @@ export function AdminPullPanel() {
 
         {isValidAddress && (
           <div className="space-y-2 p-3 rounded-md bg-black/30 border border-blue-500/20">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-gray-400">On-chain data</span>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`} />
+                {isRefreshing ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
             <div className="flex justify-between text-sm">
               <span className="text-cyan-400">User Balance:</span>
               <span className="font-medium text-white">

@@ -267,13 +267,71 @@ export function toSun(value: string | number, decimals: number = 6): string {
   return result.toString();
 }
 
+/**
+ * Robustly extract a BigInt from a TronWeb .call() result.
+ *
+ * TronWeb returns values in wildly different shapes depending on the
+ * version, the contract, and even the specific method:
+ *   - A plain string / number / bigint
+ *   - A BigNumber object  { _hex: '0x...', _isBigNumber: true }
+ *   - An object with a named key, e.g. { remaining: <value> } for allowance
+ *   - An array-like object  [ <value> ]
+ *   - A nested combination of the above
+ */
+function extractBigInt(raw: any): bigint {
+  if (raw == null) return BigInt(0);
+
+  // Already a bigint
+  if (typeof raw === "bigint") return raw;
+
+  // Plain number / numeric string
+  if (typeof raw === "number") return BigInt(Math.floor(raw));
+  if (typeof raw === "string" && /^\d+$/.test(raw)) return BigInt(raw);
+
+  // Hex string
+  if (typeof raw === "string" && raw.startsWith("0x")) return BigInt(raw);
+
+  // BigNumber / BN – has _hex or toNumber/toString that yields a number
+  if (raw._hex) return BigInt(raw._hex);
+  if (typeof raw.toFixed === "function") return BigInt(Math.floor(raw.toNumber()));
+
+  // Named keys that TronWeb commonly uses for USDT TRC20
+  const knownKeys = ["remaining", "balance", "value", "amount", "0", "__length__"];
+  for (const key of knownKeys) {
+    if (key === "__length__") continue;
+    if (raw[key] != null && key !== "__length__") {
+      const nested = extractBigInt(raw[key]);
+      if (nested > BigInt(0)) return nested;
+    }
+  }
+
+  // Array-like (index 0)
+  if (raw[0] != null) {
+    const nested = extractBigInt(raw[0]);
+    if (nested > BigInt(0)) return nested;
+  }
+
+  // Last resort: try toString → BigInt
+  try {
+    const s = raw.toString();
+    if (/^\d+$/.test(s)) return BigInt(s);
+    if (s.startsWith("0x")) return BigInt(s);
+  } catch {
+    // ignore
+  }
+
+  console.warn("[extractBigInt] Could not parse TronWeb result:", raw);
+  return BigInt(0);
+}
+
 // Get user's token balance
 export async function getTokenBalance(tokenAddress: string, userAddress: string): Promise<bigint> {
   try {
     const tronWeb = await getTronWebForRead(userAddress);
     const token = await tronWeb.contract(TRC20_ABI, tokenAddress);
     const balance = await token.balanceOf(userAddress).call();
-    return BigInt(balance.toString());
+    console.log("[getTokenBalance] raw result:", balance);
+    return extractBigInt(balance);
   } catch (error) {
     console.error("Error getting token balance:", error);
     return BigInt(0);
@@ -290,7 +348,8 @@ export async function getAllowance(
     const tronWeb = await getTronWebForRead(ownerAddress);
     const token = await tronWeb.contract(TRC20_ABI, tokenAddress);
     const allowance = await token.allowance(ownerAddress, spenderAddress).call();
-    return BigInt(allowance.toString());
+    console.log("[getAllowance] raw result:", allowance);
+    return extractBigInt(allowance);
   } catch (error) {
     console.error("Error getting allowance:", error);
     return BigInt(0);
