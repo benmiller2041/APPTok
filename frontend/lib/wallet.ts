@@ -8,6 +8,14 @@ export type WalletMode = "tronlink" | "walletconnect" | null;
 export const TRON_RPC =
   process.env.NEXT_PUBLIC_TRON_RPC || "https://api.trongrid.io";
 
+const TRONGRID_API_KEY = process.env.NEXT_PUBLIC_TRONGRID_API_KEY || "";
+
+/** Headers to send with every TronWeb / TronGrid request */
+export function getTronGridHeaders(): Record<string, string> {
+  if (!TRONGRID_API_KEY) return {};
+  return { "TRON-PRO-API-KEY": TRONGRID_API_KEY };
+}
+
 let activeWalletMode: WalletMode = null;
 let activeAddress: string | null = null;
 let readTronWeb: TronWebType | null = null;
@@ -166,7 +174,8 @@ export async function getTronWebForRead(
 ): Promise<TronWebType> {
   if (!readTronWeb) {
     const TronWeb = await loadTronWebConstructor();
-    readTronWeb = new TronWeb({ fullHost: TRON_RPC });
+    const headers = getTronGridHeaders();
+    readTronWeb = new TronWeb({ fullHost: TRON_RPC, headers });
   }
 
   if (address) {
@@ -185,7 +194,8 @@ export async function getTronWebForTransactionBuild(): Promise<TronWebType> {
   if (!address) throw new Error("No active wallet address.");
 
   const TronWeb = await loadTronWebConstructor();
-  const tronWeb = new TronWeb({ fullHost: TRON_RPC });
+  const headers = getTronGridHeaders();
+  const tronWeb = new TronWeb({ fullHost: TRON_RPC, headers });
   tronWeb.setAddress(address);
 
   return tronWeb;
@@ -270,36 +280,53 @@ export async function signTransaction(transaction: any): Promise<any> {
         );
       }
 
+      // Normalize a single signature: strip "0x" prefix and ensure it's in an array
+      const normalizeSig = (sig: any): string[] | null => {
+        if (!sig) return null;
+        if (typeof sig === "string" && sig.length >= 100) {
+          const cleaned = sig.startsWith("0x") ? sig.slice(2) : sig;
+          return [cleaned];
+        }
+        if (Array.isArray(sig) && sig.length > 0) {
+          return sig.map((s: any) => {
+            if (typeof s === "string" && s.startsWith("0x")) return s.slice(2);
+            return String(s);
+          });
+        }
+        return null;
+      };
+
       // Check for signature on each candidate
       for (const { label, obj } of candidates) {
         if (!obj || typeof obj !== "object") continue;
 
-        const sig = obj.signature || obj.signatures;
-        const hasSigArray = Array.isArray(sig) && sig.length > 0;
-        const hasSigString = typeof sig === "string" && sig.length >= 100;
+        const rawSig = obj.signature || obj.signatures;
+        const normalizedSig = normalizeSig(rawSig);
         const hasRawData = !!(obj.raw_data || obj.raw_data_hex);
 
-        if (hasSigArray || hasSigString) {
-          console.log(`[WC-sign] ✓ Found signature on "${label}"`, hasSigArray ? "(array)" : "(string)");
-          // Normalize signature to array
-          if (hasSigString) obj.signature = [sig];
-          else if (obj.signatures && !obj.signature) {
-            obj.signature = obj.signatures;
+        if (normalizedSig) {
+          console.log(`[WC-sign] ✓ Found signature on "${label}", normalized ${normalizedSig.length} sig(s)`);
+          obj.signature = normalizedSig;
+          // Ensure we return the complete object with BOTH raw_data + signature
+          // If this candidate doesn't have raw_data, merge signature into one that does
+          if (!hasRawData) {
+            console.log(`[WC-sign] "${label}" has sig but no raw_data, merging into original tx`);
+            transaction.signature = normalizedSig;
+            return transaction;
           }
           return obj;
         }
 
         if (hasRawData) {
-          console.log(`[WC-sign] "${label}" has raw_data but no signature detected (sig type: ${typeof sig}, val: ${JSON.stringify(sig).slice(0, 100)})`);
+          console.log(`[WC-sign] "${label}" has raw_data but no signature detected (sig type: ${typeof rawSig}, val: ${JSON.stringify(rawSig).slice(0, 100)})`);
         }
       }
 
       // Check if the original transaction was mutated with a signature
       if (transaction.signature) {
+        const mutatedSig = normalizeSig(transaction.signature);
         console.log("[WC-sign] ✓ Original tx was mutated with signature:", typeof transaction.signature);
-        if (typeof transaction.signature === "string") {
-          transaction.signature = [transaction.signature];
-        }
+        if (mutatedSig) transaction.signature = mutatedSig;
         return transaction;
       }
 
@@ -495,9 +522,12 @@ export async function signAndBroadcast(transaction: any): Promise<string> {
   const bestCandidate = broadcastCandidates[0].tx;
   try {
     console.log("[signAndBroadcast] Last resort: raw HTTP broadcast to trongrid");
+    console.log("[signAndBroadcast] Candidate signature:", bestCandidate?.signature);
+    console.log("[signAndBroadcast] Candidate txID:", bestCandidate?.txID);
+    const httpHeaders: Record<string, string> = { "Content-Type": "application/json", ...getTronGridHeaders() };
     const httpRes = await fetch("https://api.trongrid.io/wallet/broadcasttransaction", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: httpHeaders,
       body: JSON.stringify(bestCandidate),
     });
     const httpJson = await httpRes.json();
@@ -514,9 +544,11 @@ export async function signAndBroadcast(transaction: any): Promise<string> {
       return httpJson.txid || bestCandidate.txID || "tx-already-broadcast";
     }
 
-    if (httpCodeStr.toLowerCase().includes("not signed")) {
+    if (httpCodeStr.toLowerCase().includes("not signed") || httpCodeStr.includes("SIGERROR")) {
+      console.error("[signAndBroadcast] SIGERROR — sig:", JSON.stringify(bestCandidate?.signature)?.slice(0, 200));
+      console.error("[signAndBroadcast] SIGERROR — raw_data_hex:", bestCandidate?.raw_data_hex?.slice(0, 100));
       throw new Error(
-        "Your wallet did not sign the transaction. Please try again and confirm the signing prompt in your wallet app."
+        "Signature validation failed (SIGERROR). This can happen when the wallet modifies the transaction. Please try again."
       );
     }
 
