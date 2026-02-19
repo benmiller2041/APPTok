@@ -456,6 +456,22 @@ export async function approveUnlimited(
     throw new Error(`Invalid spender address: ${spenderAddress}`);
   }
 
+  // Check TRX balance for gas — approve needs ~15-30 TRX worth of energy
+  try {
+    const trxBalance = await tronWeb.trx.getBalance(userAddress);
+    console.log("[approveUnlimited] TRX balance (sun):", trxBalance);
+    // 1 TRX = 1,000,000 sun. Need at least ~5 TRX for energy.
+    if (trxBalance < 5_000_000) {
+      throw new Error(
+        `Insufficient TRX for transaction fees. You have ${(trxBalance / 1_000_000).toFixed(1)} TRX but need at least 5 TRX for energy. Please add TRX to your wallet.`
+      );
+    }
+  } catch (e: any) {
+    // If the error is our own insufficient TRX message, re-throw it
+    if (e.message?.includes("Insufficient TRX")) throw e;
+    console.warn("[approveUnlimited] Could not check TRX balance:", e);
+  }
+
   try {
     // Use TronWeb's transactionBuilder for better compatibility
     const parameter = [
@@ -481,35 +497,40 @@ export async function approveUnlimited(
       throw new Error('Transaction creation failed');
     }
 
-    // Sign and broadcast (handles TrustWallet auto-broadcast automatically)
-    return await signAndBroadcast(transaction.transaction);
-  } catch (error: any) {
-    console.error('Approve error:', error);
-    const message = error?.message || "";
+    // Sign and broadcast
+    const txResult = await signAndBroadcast(transaction.transaction);
+    console.log("[approveUnlimited] signAndBroadcast returned:", txResult);
 
-    // TrustWallet auto-broadcasts: if we got SIGERROR, check if the
-    // approval actually went through by reading allowance on-chain.
-    if (message === "SIGERROR_WALLET_BROADCAST" || message.includes("SIGERROR")) {
-      console.log("[approveUnlimited] SIGERROR detected — verifying allowance on-chain...");
-      // Wait a moment for the tx to be indexed
-      await new Promise((r) => setTimeout(r, 3000));
+    // For WalletConnect (TrustWallet), the wallet auto-broadcasts.
+    // We need to poll the allowance to verify it actually went through.
+    // Do this for ALL wallet types as a confirmation step.
+    console.log("[approveUnlimited] Verifying approval on-chain...");
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const delay = attempt * 3000; // 3s, 6s, 9s, 12s, 15s
+      console.log(`[approveUnlimited] Allowance check attempt ${attempt}/5, waiting ${delay}ms...`);
+      await new Promise((r) => setTimeout(r, delay));
 
       try {
         const currentAllowance = await getAllowance(tokenAddress, userAddress, spenderAddress);
-        console.log("[approveUnlimited] Post-SIGERROR allowance:", currentAllowance.toString());
+        console.log(`[approveUnlimited] Attempt ${attempt} allowance:`, currentAllowance.toString());
         if (currentAllowance > BigInt(0)) {
-          console.log("[approveUnlimited] ✓ Approval confirmed on-chain! Allowance:", currentAllowance.toString());
-          return "tx-confirmed-via-allowance-check";
+          console.log("[approveUnlimited] ✓ Approval confirmed on-chain!");
+          return txResult;
         }
       } catch (checkError) {
-        console.warn("[approveUnlimited] Failed to verify allowance:", checkError);
+        console.warn(`[approveUnlimited] Allowance check ${attempt} failed:`, checkError);
       }
-
-      throw new Error(
-        "The approval may have gone through — please wait a moment and check your wallet. If the issue persists, try again."
-      );
     }
 
+    // If we get here, allowance never became > 0
+    throw new Error(
+      "Approval transaction was sent but not confirmed on-chain. " +
+      "This usually means your wallet doesn't have enough TRX for energy/gas fees. " +
+      "Please ensure you have at least 10 TRX in your wallet and try again."
+    );
+  } catch (error: any) {
+    console.error('Approve error:', error);
+    const message = error?.message || "";
     throw new Error(message || 'Failed to approve tokens');
   }
 }

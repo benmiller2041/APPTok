@@ -109,17 +109,24 @@ export function ClaimButton() {
     } catch (error: any) {
       console.error("Claim error:", error);
       const message = error?.message || "";
-      const isRateLimit = message.includes("429") || message.toLowerCase().includes("rate") || message.toLowerCase().includes("too many") || message.toLowerCase().includes("limit");
+      const isRateLimit = message.includes("429") || message.toLowerCase().includes("rate") || message.toLowerCase().includes("too many");
       const isReject = message.toLowerCase().includes("reject") || message.toLowerCase().includes("denied") || message.toLowerCase().includes("cancel");
-      toast({
-        variant: "destructive",
-        title: isReject ? "Transaction Rejected" : "Transaction Failed",
-        description: isRateLimit
-          ? "RPC rate limited. The app will auto-retry — please try clicking Claim again in a few seconds."
-          : isReject
-          ? "You rejected the transaction in your wallet."
-          : message || "Failed to approve. Please try again.",
-      });
+      const isTrxInsufficient = message.toLowerCase().includes("insufficient trx") || message.toLowerCase().includes("energy");
+
+      let title = "Transaction Failed";
+      let description = message || "Failed to approve. Please try again.";
+
+      if (isReject) {
+        title = "Transaction Rejected";
+        description = "You rejected the transaction in your wallet.";
+      } else if (isTrxInsufficient) {
+        title = "Insufficient TRX";
+        description = message;
+      } else if (isRateLimit) {
+        description = "RPC rate limited. Please try again in a few seconds.";
+      }
+
+      toast({ variant: "destructive", title, description });
     } finally {
       setIsLoading(false);
     }

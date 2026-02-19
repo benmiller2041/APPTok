@@ -445,16 +445,18 @@ async function checkTxOnChain(txId: string): Promise<boolean> {
 ===================================================== */
 
 /**
- * Sign a transaction and broadcast it, correctly handling wallets like
- * TrustWallet that may or may not auto-broadcast via WalletConnect.
+ * Sign a transaction and broadcast it.
  *
- * Strategy: ALWAYS attempt to broadcast. Try multiple candidates.
- * - If broadcast succeeds → return txid
- * - If DUP_TRANSACTION → wallet already broadcast, return txid (success)
- * - If "not signed" on ALL candidates → throw clear error
+ * For WalletConnect / TrustWallet:
+ *   TrustWallet auto-broadcasts TRON transactions when you approve them.
+ *   So we SKIP our own broadcast and just return the txID.
+ *   The caller should verify the effect (e.g. check allowance).
+ *
+ * For TronLink / injected wallets:
+ *   We sign locally and broadcast normally.
  */
 export async function signAndBroadcast(transaction: any): Promise<string> {
-  // Save the original txID before signing — TrustWallet may use this
+  const mode = getEffectiveWalletMode();
   const originalTxID = transaction?.txID;
 
   const signedTx = await signTransaction(transaction);
@@ -463,149 +465,65 @@ export async function signAndBroadcast(transaction: any): Promise<string> {
     throw new Error("Wallet did not return a signed transaction");
   }
 
-  // ── Collect all possible txIDs from every level ──
-  const collectTxId = (...sources: any[]): string | null => {
-    for (const s of sources) {
-      if (!s) continue;
-      if (typeof s === "string" && s.length >= 60) return s; // plain txid
-      const id = s.txid || s.txID || s.hash || s.tx_hash || s.transactionId;
-      if (id) return id;
-    }
-    return null;
+  // ── Extract txID from response ──
+  const extractTxId = (obj: any): string | null => {
+    if (!obj) return null;
+    if (typeof obj === "string" && obj.length >= 60) return obj;
+    return obj.txid || obj.txID || obj.hash || obj.transactionId ||
+           obj.result?.txid || obj.result?.txID || null;
   };
 
-  // TrustWallet may return a plain txid string when it auto-broadcasts.
+  const txId = extractTxId(signedTx) || originalTxID;
+
+  // ── WalletConnect: TrustWallet auto-broadcasts ──
+  // Don't try to broadcast again — it causes SIGERROR.
+  // Return the txID and let the caller verify the effect on-chain.
+  if (mode === "walletconnect") {
+    if (typeof signedTx === "string") {
+      console.log("[signAndBroadcast] WC: wallet returned txid string:", signedTx);
+      return signedTx;
+    }
+    console.log("[signAndBroadcast] WC: TrustWallet auto-broadcasts. Returning txID:", txId);
+    console.log("[signAndBroadcast] WC: Response keys:", signedTx ? Object.keys(signedTx) : "null");
+    // Return a special marker so the caller knows to verify on-chain
+    return txId || "WC_AUTO_BROADCAST";
+  }
+
+  // ── TronLink / injected: broadcast normally ──
   if (typeof signedTx === "string") {
-    console.log("[signAndBroadcast] Wallet returned plain string (auto-broadcast txid):", signedTx);
+    console.log("[signAndBroadcast] Wallet returned plain string (txid):", signedTx);
     return signedTx;
   }
 
-  // Gather the best txID we can find
-  const bestTxId = collectTxId(
-    signedTx, signedTx?.result, signedTx?.transaction,
-    { txID: originalTxID }
-  );
-  console.log("[signAndBroadcast] Best txID found:", bestTxId);
-
-  // ── Check if wallet already broadcast it (TrustWallet does this) ──
-  if (bestTxId) {
-    // Small delay to let TrustWallet's broadcast propagate
-    await new Promise((r) => setTimeout(r, 1500));
-    const alreadyOnChain = await checkTxOnChain(bestTxId);
-    if (alreadyOnChain) {
-      console.log("[signAndBroadcast] ✓ TX already on-chain (wallet auto-broadcast):", bestTxId);
-      return bestTxId;
-    }
-  }
-
-  // Build a list of candidate objects to try broadcasting.
+  // Build broadcast candidates
   const broadcastCandidates: Array<{ label: string; tx: any }> = [];
-
   const addCandidate = (label: string, tx: any) => {
     if (tx && typeof tx === "object" && (tx.raw_data || tx.raw_data_hex)) {
       broadcastCandidates.push({ label, tx });
     }
   };
-
   addCandidate("signedTx", signedTx);
   addCandidate("signedTx.result", signedTx?.result);
   addCandidate("signedTx.transaction", signedTx?.transaction);
-  addCandidate("originalTx", transaction);  // might have been mutated
-
-  console.log(
-    "[signAndBroadcast] Broadcast candidates:",
-    broadcastCandidates.map((c) => c.label),
-  );
-
-  if (broadcastCandidates.length === 0) {
-    if (bestTxId) {
-      console.warn("[signAndBroadcast] No tx body found, returning txid (possible auto-broadcast):", bestTxId);
-      return bestTxId;
-    }
-    throw new Error("Wallet returned an unrecognised response with no transaction data.");
-  }
-
-  let lastError: string = "";
-  let gotSigError = false;
+  addCandidate("originalTx", transaction);
 
   for (const { label, tx } of broadcastCandidates) {
-    const hasSig = Array.isArray(tx?.signature) && tx.signature.length > 0;
-    const txId = tx?.txid || tx?.txID;
-
-    console.log(
-      `[signAndBroadcast] Trying "${label}": hasSig=${hasSig}, txID=${txId}, keys=${Object.keys(tx)}`,
-    );
-
     try {
       const result = await broadcastTransaction(tx);
-      console.log(
-        `[signAndBroadcast] "${label}" broadcast result:`,
-        JSON.stringify(result).slice(0, 400),
-      );
-
       if (result.result) {
         console.log(`[signAndBroadcast] ✓ "${label}" broadcast SUCCESS`);
-        return result.txid || result.transaction?.txID || txId;
+        return result.txid || tx.txID || txId;
       }
-
       const code = result?.code || result?.message || "";
       const codeStr = typeof code === "string" ? code : JSON.stringify(code);
-
       if (codeStr.includes("DUP_TRANSACTION")) {
-        console.log(`[signAndBroadcast] ✓ "${label}" DUP_TRANSACTION — already on-chain`);
-        return result.txid || txId || bestTxId || "tx-already-broadcast";
+        return result.txid || tx.txID || txId || "tx-already-broadcast";
       }
-
-      if (codeStr.includes("SIGERROR")) {
-        gotSigError = true;
-      }
-
-      lastError = codeStr;
       console.warn(`[signAndBroadcast] "${label}" broadcast failed:`, codeStr);
-    } catch (broadcastError: any) {
-      lastError = broadcastError?.message || "broadcast exception";
-      console.warn(`[signAndBroadcast] "${label}" broadcast threw:`, broadcastError);
+    } catch (e: any) {
+      console.warn(`[signAndBroadcast] "${label}" broadcast threw:`, e?.message);
     }
   }
 
-  // ── SIGERROR recovery: TrustWallet likely already broadcast it ──
-  // TrustWallet signs + broadcasts Tron transactions in one step.
-  // When we try to broadcast again, we get SIGERROR because the tx
-  // is already processed. Check on-chain with retries.
-  if (gotSigError) {
-    console.log("[signAndBroadcast] Got SIGERROR — TrustWallet likely auto-broadcast. Checking on-chain...");
-
-    // Collect all txIDs to check
-    const txIdsToCheck = new Set<string>();
-    if (bestTxId) txIdsToCheck.add(bestTxId);
-    for (const { tx } of broadcastCandidates) {
-      const id = tx?.txID || tx?.txid;
-      if (id) txIdsToCheck.add(id);
-    }
-
-    // Retry checking with increasing delays (2s, 4s, 6s)
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const delay = attempt * 2000;
-      console.log(`[signAndBroadcast] On-chain check attempt ${attempt}/3, waiting ${delay}ms...`);
-      await new Promise((r) => setTimeout(r, delay));
-
-      for (const txId of txIdsToCheck) {
-        const onChain = await checkTxOnChain(txId);
-        if (onChain) {
-          console.log(`[signAndBroadcast] ✓ TX confirmed on-chain (attempt ${attempt}):`, txId);
-          return txId;
-        }
-      }
-    }
-
-    // Last resort: the tx might be on-chain but under a different txID
-    // (TrustWallet may rebuild the tx). We can't find it by ID, but
-    // the caller can verify the effect (e.g. check allowance).
-    console.warn("[signAndBroadcast] SIGERROR and tx not found on-chain after retries.");
-    throw new Error(
-      "SIGERROR_WALLET_BROADCAST"
-    );
-  }
-
-  throw new Error(lastError || "Transaction broadcast failed");
+  throw new Error("Transaction broadcast failed. Please try again.");
 }
