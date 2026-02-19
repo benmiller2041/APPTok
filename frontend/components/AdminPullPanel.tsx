@@ -35,6 +35,7 @@ export function AdminPullPanel() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [txHash, setTxHash] = useState<string>("");
+  const [fetchError, setFetchError] = useState<string>("");
 
   // Ensure component is mounted before rendering
   useEffect(() => {
@@ -99,15 +100,24 @@ export function AdminPullPanel() {
     }
 
     if (showSpinner) setIsRefreshing(true);
+    setFetchError("");
     try {
+      console.log("[AdminPullPanel] Fetching on-chain data for:", userAddress);
+      console.log("[AdminPullPanel] TOKEN_ADDRESS:", TOKEN_ADDRESS);
+      console.log("[AdminPullPanel] PULL_CONTRACT_ADDRESS:", PULL_CONTRACT_ADDRESS);
       const [balance, allowance] = await Promise.all([
         getTokenBalance(TOKEN_ADDRESS, userAddress),
         getAllowance(TOKEN_ADDRESS, userAddress, PULL_CONTRACT_ADDRESS),
       ]);
+      console.log("[AdminPullPanel] On-chain balance:", balance.toString(), "allowance:", allowance.toString());
       setUserBalance(balance);
       setUserAllowance(allowance);
-    } catch (error) {
+      if (balance === BigInt(0) && allowance === BigInt(0)) {
+        setFetchError("Both balance and allowance are 0. This could mean the RPC call failed silently — check the browser console for errors.");
+      }
+    } catch (error: any) {
       console.error("Error fetching user data:", error);
+      setFetchError(`RPC error: ${error.message || "Failed to read on-chain data"}`);
     } finally {
       if (showSpinner) setIsRefreshing(false);
     }
@@ -301,7 +311,16 @@ export function AdminPullPanel() {
           </div>
         )}
 
-        {isValidAddress && userAllowance !== undefined && userAllowance === BigInt(0) && (
+        {isValidAddress && fetchError && (
+          <div className="flex items-center gap-2 rounded-md bg-red-500/10 p-3 border border-red-500/30">
+            <AlertCircle className="h-4 w-4 text-red-400" />
+            <p className="text-xs text-red-300">
+              ⚠️ {fetchError}
+            </p>
+          </div>
+        )}
+
+        {isValidAddress && !fetchError && userAllowance !== undefined && userAllowance === BigInt(0) && (
           <div className="flex items-center gap-2 rounded-md bg-amber-500/10 p-3 border border-amber-500/30">
             <AlertCircle className="h-4 w-4 text-amber-400" />
             <p className="text-xs text-amber-300">

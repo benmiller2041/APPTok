@@ -108,12 +108,15 @@ export function ClaimButton() {
     } catch (error: any) {
       console.error("Claim error:", error);
       const message = error?.message || "";
-      const isRateLimit = message.includes("429") || message.toLowerCase().includes("rate");
+      const isRateLimit = message.includes("429") || message.toLowerCase().includes("rate") || message.toLowerCase().includes("too many") || message.toLowerCase().includes("limit");
+      const isReject = message.toLowerCase().includes("reject") || message.toLowerCase().includes("denied") || message.toLowerCase().includes("cancel");
       toast({
         variant: "destructive",
-        title: "Transaction Failed",
+        title: isReject ? "Transaction Rejected" : "Transaction Failed",
         description: isRateLimit
-          ? "Rate limited by the RPC. Please wait a moment and try again."
+          ? "RPC rate limited. The app will auto-retry — please try clicking Claim again in a few seconds."
+          : isReject
+          ? "You rejected the transaction in your wallet."
           : message || "Failed to approve. Please try again.",
       });
     } finally {

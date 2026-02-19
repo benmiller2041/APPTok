@@ -51,8 +51,8 @@ export function ApproveUnlimited({ onEligibilityCheck }: ApproveUnlimitedProps) 
 
     fetchData();
     
-    // Poll for updates every 5 seconds
-    const interval = setInterval(fetchData, 5000);
+    // Poll for updates every 30 seconds (avoid RPC rate limiting)
+    const interval = setInterval(fetchData, 30_000);
     return () => clearInterval(interval);
   }, [address]);
 

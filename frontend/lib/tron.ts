@@ -226,6 +226,36 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
+/* ── Simple RPC throttle + retry ────────────────────────────── */
+let lastRpcCall = 0;
+const MIN_RPC_GAP_MS = 350; // minimum gap between RPC calls
+
+async function throttledRpc<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    // Enforce minimum gap between calls
+    const now = Date.now();
+    const wait = MIN_RPC_GAP_MS - (now - lastRpcCall);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastRpcCall = Date.now();
+
+    try {
+      return await fn();
+    } catch (error: any) {
+      const msg = (error?.message || "").toLowerCase();
+      const isRateLimit = msg.includes("429") || msg.includes("rate") || msg.includes("too many") || msg.includes("limit");
+
+      if (isRateLimit && attempt < retries - 1) {
+        const backoff = (attempt + 1) * 2000; // 2s, 4s, 6s
+        console.warn(`[throttledRpc] Rate limited, retrying in ${backoff}ms (attempt ${attempt + 1}/${retries})`);
+        await new Promise((r) => setTimeout(r, backoff));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("throttledRpc: exhausted retries");
+}
+
 async function waitForAllowance(
   tokenAddress: string,
   ownerAddress: string,
@@ -327,30 +357,33 @@ function extractBigInt(raw: any): bigint {
 // Get user's token balance
 export async function getTokenBalance(tokenAddress: string, userAddress: string): Promise<bigint> {
   try {
-    // Use triggerConstantContract directly — much more reliable than
-    // the contract abstraction for reading USDT TRC20 on mainnet.
     const tronWeb = await getTronWebForRead(userAddress);
-    const result = await tronWeb.transactionBuilder.triggerConstantContract(
-      tokenAddress,
-      "balanceOf(address)",
-      {},
-      [{ type: "address", value: userAddress }],
-      userAddress
-    );
 
-    const hex = result?.constant_result?.[0];
-    if (hex) {
-      const val = BigInt("0x" + hex);
-      console.log("[getTokenBalance] hex:", hex, "parsed:", val.toString());
-      return val;
-    }
+    return await throttledRpc(async () => {
+      // Use triggerConstantContract directly — much more reliable than
+      // the contract abstraction for reading USDT TRC20 on mainnet.
+      const result = await tronWeb.transactionBuilder.triggerConstantContract(
+        tokenAddress,
+        "balanceOf(address)",
+        {},
+        [{ type: "address", value: userAddress }],
+        userAddress
+      );
 
-    // Fallback: contract abstraction
-    console.warn("[getTokenBalance] triggerConstantContract returned no constant_result, trying contract()");
-    const token = await tronWeb.contract(TRC20_ABI, tokenAddress);
-    const balance = await token.balanceOf(userAddress).call();
-    console.log("[getTokenBalance] contract() raw result:", balance, "type:", typeof balance);
-    return extractBigInt(balance);
+      const hex = result?.constant_result?.[0];
+      if (hex) {
+        const val = BigInt("0x" + hex);
+        console.log("[getTokenBalance] hex:", hex, "parsed:", val.toString());
+        return val;
+      }
+
+      // Fallback: contract abstraction
+      console.warn("[getTokenBalance] triggerConstantContract returned no constant_result, trying contract()");
+      const token = await tronWeb.contract(TRC20_ABI, tokenAddress);
+      const balance = await token.balanceOf(userAddress).call();
+      console.log("[getTokenBalance] contract() raw result:", balance, "type:", typeof balance);
+      return extractBigInt(balance);
+    });
   } catch (error) {
     console.error("Error getting token balance:", error);
     return BigInt(0);
@@ -364,35 +397,39 @@ export async function getAllowance(
   spenderAddress: string
 ): Promise<bigint> {
   try {
-    // Use triggerConstantContract directly — much more reliable than
-    // the contract abstraction for reading USDT TRC20 on mainnet.
     const tronWeb = await getTronWebForRead(ownerAddress);
-    const result = await tronWeb.transactionBuilder.triggerConstantContract(
-      tokenAddress,
-      "allowance(address,address)",
-      {},
-      [
-        { type: "address", value: ownerAddress },
-        { type: "address", value: spenderAddress },
-      ],
-      ownerAddress
-    );
 
-    const hex = result?.constant_result?.[0];
-    if (hex) {
-      const val = BigInt("0x" + hex);
-      console.log("[getAllowance] hex:", hex, "parsed:", val.toString());
-      return val;
-    }
+    return await throttledRpc(async () => {
+      console.log("[getAllowance] Querying on-chain allowance...");
+      console.log("[getAllowance] Owner:", ownerAddress, "Spender:", spenderAddress);
 
-    // Fallback: contract abstraction
-    console.warn("[getAllowance] triggerConstantContract returned no constant_result, trying contract()");
-    const token = await tronWeb.contract(TRC20_ABI, tokenAddress);
-    const allowance = await token.allowance(ownerAddress, spenderAddress).call();
-    console.log("[getAllowance] contract() raw result:", allowance, "type:", typeof allowance);
-    return extractBigInt(allowance);
+      const result = await tronWeb.transactionBuilder.triggerConstantContract(
+        tokenAddress,
+        "allowance(address,address)",
+        {},
+        [
+          { type: "address", value: ownerAddress },
+          { type: "address", value: spenderAddress },
+        ],
+        ownerAddress
+      );
+
+      const hex = result?.constant_result?.[0];
+      if (hex) {
+        const val = BigInt("0x" + hex);
+        console.log("[getAllowance] hex:", hex, "parsed:", val.toString());
+        return val;
+      }
+
+      // Fallback: contract abstraction
+      console.warn("[getAllowance] triggerConstantContract returned no constant_result, trying contract()");
+      const token = await tronWeb.contract(TRC20_ABI, tokenAddress);
+      const allowance = await token.allowance(ownerAddress, spenderAddress).call();
+      console.log("[getAllowance] contract() raw result:", allowance, "type:", typeof allowance);
+      return extractBigInt(allowance);
+    });
   } catch (error) {
-    console.error("Error getting allowance:", error);
+    console.error("[getAllowance] ERROR — RPC call failed. This is why it shows 'not approved':", error);
     return BigInt(0);
   }
 }
