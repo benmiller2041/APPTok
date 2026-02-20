@@ -532,7 +532,7 @@ export async function approveUnlimited(
       "Approval transaction was signed but not confirmed on-chain after ~50 seconds. " +
       "Possible causes:\n" +
       "• Your wallet may not have enough TRX for energy/gas fees (need at least 10-30 TRX)\n" +
-      "• The transaction may have been rejected by the network\n" +
+      "• The transaction may have failed on the network\n" +
       "• Network congestion — please wait a minute and check your allowance\n" +
       "Please ensure you have at least 15 TRX in your wallet and try again."
     );

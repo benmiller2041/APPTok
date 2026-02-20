@@ -470,7 +470,7 @@ export async function signAndBroadcast(transaction: any): Promise<string> {
     if (!obj) return null;
     if (typeof obj === "string" && obj.length >= 60) return obj;
     return obj.txid || obj.txID || obj.hash || obj.transactionId ||
-           obj.result?.txid || obj.result?.txID || null;
+      obj.result?.txid || obj.result?.txID || null;
   };
 
   const txId = extractTxId(signedTx) || originalTxID;
@@ -535,6 +535,11 @@ export async function signAndBroadcast(transaction: any): Promise<string> {
     console.log("[signAndBroadcast] WC: Response keys:", signedTx ? Object.keys(signedTx) : "null");
     console.log("[signAndBroadcast] WC: txId:", txId);
     console.log("[signAndBroadcast] WC: has signature?", !!(signedTx?.signature));
+    console.log("[signAndBroadcast] WC: signature type:", typeof signedTx?.signature,
+      "length:", Array.isArray(signedTx?.signature) ? signedTx.signature.length : "n/a");
+    console.log("[signAndBroadcast] WC: has raw_data?", !!(signedTx?.raw_data));
+    console.log("[signAndBroadcast] WC: has raw_data_hex?", !!(signedTx?.raw_data_hex));
+    console.log("[signAndBroadcast] WC: full response (first 500):", JSON.stringify(signedTx).slice(0, 500));
 
     // Step 1: Wait a moment for potential auto-broadcast to propagate
     if (txId && txId !== "WC_AUTO_BROADCAST") {
