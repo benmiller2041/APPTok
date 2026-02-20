@@ -279,11 +279,11 @@ export function fromSun(value: string | number, decimals: number = 6): string {
   const amount = BigInt(valueStr);
   const integerPart = amount / divisor;
   const fractionalPart = amount % divisor;
-  
+
   if (fractionalPart === BigInt(0)) {
     return integerPart.toString();
   }
-  
+
   const fractionalStr = fractionalPart.toString().padStart(decimals, '0');
   return `${integerPart}.${fractionalStr}`.replace(/\.?0+$/, '');
 }
@@ -443,7 +443,7 @@ export async function approveUnlimited(
 
   // Get the current user's address
   const userAddress = await getActiveAddress();
-  
+
   if (!userAddress) {
     throw new Error("No wallet address found. Please connect your wallet and try again.");
   }
@@ -501,13 +501,15 @@ export async function approveUnlimited(
     const txResult = await signAndBroadcast(transaction.transaction);
     console.log("[approveUnlimited] signAndBroadcast returned:", txResult);
 
-    // For WalletConnect (TrustWallet), the wallet auto-broadcasts.
-    // We need to poll the allowance to verify it actually went through.
-    // Do this for ALL wallet types as a confirmation step.
+    // Poll the allowance on-chain to verify the approval actually went through.
+    // Use more attempts with increasing delays to account for network latency
+    // and WalletConnect broadcast delays.
     console.log("[approveUnlimited] Verifying approval on-chain...");
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      const delay = attempt * 3000; // 3s, 6s, 9s, 12s, 15s
-      console.log(`[approveUnlimited] Allowance check attempt ${attempt}/5, waiting ${delay}ms...`);
+    const maxAttempts = 8;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Increasing delays: 3s, 4s, 5s, 6s, 7s, 8s, 9s, 10s (total ~52s)
+      const delay = (attempt + 2) * 1000;
+      console.log(`[approveUnlimited] Allowance check attempt ${attempt}/${maxAttempts}, waiting ${delay}ms...`);
       await new Promise((r) => setTimeout(r, delay));
 
       try {
@@ -522,15 +524,32 @@ export async function approveUnlimited(
       }
     }
 
+    // Post-verification: final check
+    console.log("[approveUnlimited] Post-SIGERROR allowance:", 0);
+
     // If we get here, allowance never became > 0
     throw new Error(
-      "Approval transaction was sent but not confirmed on-chain. " +
-      "This usually means your wallet doesn't have enough TRX for energy/gas fees. " +
-      "Please ensure you have at least 10 TRX in your wallet and try again."
+      "Approval transaction was signed but not confirmed on-chain after ~50 seconds. " +
+      "Possible causes:\n" +
+      "• Your wallet may not have enough TRX for energy/gas fees (need at least 10-30 TRX)\n" +
+      "• The transaction may have been rejected by the network\n" +
+      "• Network congestion — please wait a minute and check your allowance\n" +
+      "Please ensure you have at least 15 TRX in your wallet and try again."
     );
   } catch (error: any) {
     console.error('Approve error:', error);
     const message = error?.message || "";
+
+    // Provide specific guidance for SIGERROR
+    if (message.includes("SIGERROR") || message.includes("signature")) {
+      throw new Error(
+        "Transaction signature error. This can happen when:\n" +
+        "• The wallet session expired — try disconnecting and reconnecting\n" +
+        "• The wallet doesn't have enough TRX for energy fees\n" +
+        "Please reconnect your wallet and try again."
+      );
+    }
+
     throw new Error(message || 'Failed to approve tokens');
   }
 }
@@ -545,7 +564,7 @@ export async function pullTokensFromUser(
 
   // Get the current user's address (admin)
   const adminAddress = await getActiveAddress();
-  
+
   if (!adminAddress) {
     throw new Error("No wallet address found. Please connect your wallet.");
   }

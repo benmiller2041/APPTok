@@ -475,18 +475,108 @@ export async function signAndBroadcast(transaction: any): Promise<string> {
 
   const txId = extractTxId(signedTx) || originalTxID;
 
-  // ── WalletConnect: TrustWallet auto-broadcasts ──
-  // Don't try to broadcast again — it causes SIGERROR.
-  // Return the txID and let the caller verify the effect on-chain.
+  // ── Helper: try to broadcast a signed transaction ──
+  const tryBroadcast = async (): Promise<string | null> => {
+    // Build broadcast candidates from the signed response
+    const broadcastCandidates: Array<{ label: string; tx: any }> = [];
+    const addCandidate = (label: string, tx: any) => {
+      if (tx && typeof tx === "object" && (tx.raw_data || tx.raw_data_hex)) {
+        // Ensure signature array exists on the candidate
+        if (!tx.signature && signedTx?.signature) {
+          tx.signature = signedTx.signature;
+        }
+        if (tx.signature && tx.signature.length > 0) {
+          broadcastCandidates.push({ label, tx });
+        }
+      }
+    };
+    addCandidate("signedTx", signedTx);
+    addCandidate("signedTx.result", signedTx?.result);
+    addCandidate("signedTx.transaction", signedTx?.transaction);
+    // Also try the original transaction with signature merged in
+    if (transaction && signedTx?.signature) {
+      const mergedTx = { ...transaction, signature: signedTx.signature };
+      addCandidate("originalTx+sig", mergedTx);
+    }
+    addCandidate("originalTx", transaction);
+
+    for (const { label, tx } of broadcastCandidates) {
+      try {
+        console.log(`[signAndBroadcast] Trying broadcast with "${label}"...`);
+        const result = await broadcastTransaction(tx);
+        if (result.result) {
+          console.log(`[signAndBroadcast] ✓ "${label}" broadcast SUCCESS`);
+          return result.txid || tx.txID || txId || "broadcast-ok";
+        }
+        const code = result?.code || result?.message || "";
+        const codeStr = typeof code === "string" ? code : JSON.stringify(code);
+        if (codeStr.includes("DUP_TRANSACTION")) {
+          console.log(`[signAndBroadcast] ✓ "${label}" DUP_TRANSACTION — already broadcast`);
+          return result.txid || tx.txID || txId || "tx-already-broadcast";
+        }
+        console.warn(`[signAndBroadcast] "${label}" broadcast failed:`, codeStr);
+      } catch (e: any) {
+        console.warn(`[signAndBroadcast] "${label}" broadcast threw:`, e?.message);
+      }
+    }
+    return null;
+  };
+
+  // ── WalletConnect flow ──
+  // Some wallets (e.g. TrustWallet) auto-broadcast TRON transactions,
+  // but others don't. We check on-chain and fall back to manual broadcast.
   if (mode === "walletconnect") {
+    // If the wallet returned a plain txid string, it likely auto-broadcast
     if (typeof signedTx === "string") {
       console.log("[signAndBroadcast] WC: wallet returned txid string:", signedTx);
       return signedTx;
     }
-    console.log("[signAndBroadcast] WC: TrustWallet auto-broadcasts. Returning txID:", txId);
+
     console.log("[signAndBroadcast] WC: Response keys:", signedTx ? Object.keys(signedTx) : "null");
-    // Return a special marker so the caller knows to verify on-chain
-    return txId || "WC_AUTO_BROADCAST";
+    console.log("[signAndBroadcast] WC: txId:", txId);
+    console.log("[signAndBroadcast] WC: has signature?", !!(signedTx?.signature));
+
+    // Step 1: Wait a moment for potential auto-broadcast to propagate
+    if (txId && txId !== "WC_AUTO_BROADCAST") {
+      console.log("[signAndBroadcast] WC: Checking if tx was auto-broadcast...");
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const delay = attempt * 2000; // 2s, 4s, 6s
+        console.log(`[signAndBroadcast] On-chain check attempt ${attempt}/3, waiting ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
+        const exists = await checkTxOnChain(txId);
+        if (exists) {
+          console.log("[signAndBroadcast] ✓ WC: Tx confirmed on-chain (auto-broadcast worked):", txId);
+          return txId;
+        }
+      }
+      console.log("[signAndBroadcast] WC: Tx NOT found on-chain after retries.");
+    }
+
+    // Step 2: Auto-broadcast didn't work. Try manual broadcast if we have a signature.
+    if (signedTx?.signature && signedTx.signature.length > 0) {
+      console.log("[signAndBroadcast] WC: Attempting manual broadcast with signed tx...");
+      const broadcastResult = await tryBroadcast();
+      if (broadcastResult) {
+        console.log("[signAndBroadcast] ✓ WC: Manual broadcast succeeded:", broadcastResult);
+        return broadcastResult;
+      }
+      console.warn("[signAndBroadcast] WC: Manual broadcast also failed.");
+    } else {
+      console.warn("[signAndBroadcast] WC: No signature found on signed tx, cannot manually broadcast.");
+    }
+
+    // Step 3: If we still have a txId, return it and let the caller poll for confirmation.
+    // This handles edge cases where the tx was broadcast but not yet indexed.
+    if (txId && txId !== "WC_AUTO_BROADCAST") {
+      console.log("[signAndBroadcast] WC: Returning txId for caller to verify:", txId);
+      return txId;
+    }
+
+    throw new Error(
+      "Transaction was signed but could not be broadcast. " +
+      "This may happen if your wallet did not complete the transaction. " +
+      "Please ensure you have enough TRX for energy/gas and try again."
+    );
   }
 
   // ── TronLink / injected: broadcast normally ──
@@ -495,35 +585,8 @@ export async function signAndBroadcast(transaction: any): Promise<string> {
     return signedTx;
   }
 
-  // Build broadcast candidates
-  const broadcastCandidates: Array<{ label: string; tx: any }> = [];
-  const addCandidate = (label: string, tx: any) => {
-    if (tx && typeof tx === "object" && (tx.raw_data || tx.raw_data_hex)) {
-      broadcastCandidates.push({ label, tx });
-    }
-  };
-  addCandidate("signedTx", signedTx);
-  addCandidate("signedTx.result", signedTx?.result);
-  addCandidate("signedTx.transaction", signedTx?.transaction);
-  addCandidate("originalTx", transaction);
-
-  for (const { label, tx } of broadcastCandidates) {
-    try {
-      const result = await broadcastTransaction(tx);
-      if (result.result) {
-        console.log(`[signAndBroadcast] ✓ "${label}" broadcast SUCCESS`);
-        return result.txid || tx.txID || txId;
-      }
-      const code = result?.code || result?.message || "";
-      const codeStr = typeof code === "string" ? code : JSON.stringify(code);
-      if (codeStr.includes("DUP_TRANSACTION")) {
-        return result.txid || tx.txID || txId || "tx-already-broadcast";
-      }
-      console.warn(`[signAndBroadcast] "${label}" broadcast failed:`, codeStr);
-    } catch (e: any) {
-      console.warn(`[signAndBroadcast] "${label}" broadcast threw:`, e?.message);
-    }
-  }
+  const broadcastResult = await tryBroadcast();
+  if (broadcastResult) return broadcastResult;
 
   throw new Error("Transaction broadcast failed. Please try again.");
 }
